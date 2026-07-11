@@ -1,0 +1,35 @@
+# Environment & secrets
+.env
+config/credentials.py
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+*.egg
+
+# Data & cache
+.cache/
+data/*.parquet
+data/aero_trade_ledger.db
+logs/
+*.log
+
+# IDE
+.vs/
+.idea/
+.vscode/
+
+# Node / UI
+ui/node_modules/
+ui/dist/
+ui/.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Model versions (keep saved/ in repo for first-run)
+ai_engine/models/saved/*_v*.joblib

@@ -1,0 +1,3 @@
+"""
+core trading logic
+"""
