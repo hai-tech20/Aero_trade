@@ -175,6 +175,17 @@
       "aggressive_mode": false,
       "enabled_pairs": [],
       "settings": {}
+    },
+    "c1743f71-80e7-4c6e-88c5-1b9a715e90bd": {
+      "broker_id": "fbs",
+      "login": 102790591,
+      "server": "FBS-Demo",
+      "is_demo": true,
+      "display_name": "FBS",
+      "live_trading_enabled": false,
+      "aggressive_mode": false,
+      "enabled_pairs": [],
+      "settings": {}
     }
   }
 }

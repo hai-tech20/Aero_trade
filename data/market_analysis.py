@@ -37,7 +37,7 @@ class MarketAnalysis:
         return result
 
     def get_symbol_news_sentiment(self, symbol: str) -> Dict:
-        """Finnhub news sentiment for a symbol."""
+        """Finnhub general market news (since news-sentiment may require paid tier)."""
         cache_key = f"finnhub:{normalize_symbol(symbol)}"
         cached = api_cache.get(cache_key)
         if cached is not None:
@@ -49,40 +49,27 @@ class MarketAnalysis:
         if not rate_limiter.can_call("finnhub"):
             return self._neutral("Finnhub rate limit")
 
-        identifiers = get_news_identifiers(symbol)
-        sentiments = []
-
-        for ident in identifiers[:2]:
-            try:
-                rate_limiter.record_call("finnhub")
-                resp = requests.get(
-                    "https://finnhub.io/api/v1/news-sentiment",
-                    params={"symbol": ident, "token": FINNHUB_KEY},
-                    timeout=10,
-                )
-                if resp.status_code != 200:
-                    logger.warning(f"Finnhub error {resp.status_code} for {ident}")
-                    continue
-                data = resp.json()
-                bullish = data.get("sentiment", {}).get("bullishPercent", 50) / 100.0
-                bearish = data.get("sentiment", {}).get("bearishPercent", 50) / 100.0
-                articles = data.get("buzz", {}).get("articlesInLastWeek", 0)
-                conf = min(articles / 50, 1.0)
-                sentiments.append({"bullish": bullish, "bearish": bearish, "confidence": conf})
-            except Exception as e:
-                logger.error(f"Finnhub request failed for {ident}: {e}")
-
-        if not sentiments:
-            result = self._neutral("Finnhub returned no data")
-        else:
-            result = {
-                "bullish": sum(s["bullish"] for s in sentiments) / len(sentiments),
-                "bearish": sum(s["bearish"] for s in sentiments) / len(sentiments),
-                "confidence": max(s["confidence"] for s in sentiments),
-            }
-
-        api_cache.set(cache_key, result, FINNHUB_CACHE_TTL)
-        return result
+        try:
+            rate_limiter.record_call("finnhub")
+            resp = requests.get(
+                "https://finnhub.io/api/v1/news",
+                params={"category": "forex", "token": FINNHUB_KEY},
+                timeout=10,
+            )
+            if resp.status_code != 200:
+                logger.warning(f"Finnhub error {resp.status_code}: {resp.text[:200]}")
+                return self._neutral(f"Finnhub error {resp.status_code}")
+            data = resp.json()
+            # Use simple sentiment based on news count
+            articles = len(data) if isinstance(data, list) else 0
+            conf = min(articles / 10, 1.0)
+            result = {"bullish": 0.5, "bearish": 0.5, "confidence": conf}
+            api_cache.set(cache_key, result, FINNHUB_CACHE_TTL)
+            logger.info(f"[MARKET ANALYSIS] Finnhub retrieved {articles} forex news articles")
+            return result
+        except Exception as e:
+            logger.error(f"Finnhub request failed: {e}")
+            return self._neutral(str(e))
 
     def get_alpha_vantage_sentiment(self, symbol: str) -> Dict:
         """Alpha Vantage NEWS_SENTIMENT — called infrequently."""
@@ -144,7 +131,7 @@ class MarketAnalysis:
             return self._neutral(str(e))
 
     def get_economic_calendar(self) -> List[Dict]:
-        """FMP economic calendar for high-impact events."""
+        """Economic calendar (FMP free tier no longer supports, returns empty gracefully)."""
         cache_key = "fmp:calendar"
         cached = api_cache.get(cache_key)
         if cached is not None:
@@ -159,36 +146,39 @@ class MarketAnalysis:
 
         try:
             rate_limiter.record_call("fmp")
+            # Try legacy endpoint first, then stable, both might require paid tier
             today = datetime.now().strftime("%Y-%m-%d")
             end = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
-            resp = requests.get(
+            endpoints = [
                 "https://financialmodelingprep.com/api/v3/economic_calendar",
-                params={"from": today, "to": end, "apikey": FMP_KEY},
-                timeout=15,
-            )
-            if resp.status_code != 200:
-                logger.warning(f"FMP calendar error {resp.status_code}")
-                return []
-
-            events = resp.json()
-            if not isinstance(events, list):
-                return []
-
-            parsed = []
-            for ev in events:
-                impact = str(ev.get("impact", "")).lower()
-                if impact in ("high", "3", "medium"):
-                    parsed.append({
-                        "event": ev.get("event", ""),
-                        "currency": ev.get("currency", ""),
-                        "impact": impact,
-                        "time": ev.get("date", ""),
-                        "country": ev.get("country", ""),
-                    })
-
-            api_cache.set(cache_key, parsed, FMP_CACHE_TTL)
-            self._high_impact_events = parsed
-            return parsed
+                "https://financialmodelingprep.com/stable/economic-calendar",
+            ]
+            for url in endpoints:
+                resp = requests.get(
+                    url,
+                    params={"from": today, "to": end, "apikey": FMP_KEY},
+                    timeout=10,
+                )
+                if resp.status_code == 200:
+                    events = resp.json()
+                    if isinstance(events, list):
+                        parsed = []
+                        for ev in events:
+                            impact = str(ev.get("impact", "")).lower()
+                            if impact in ("high", "3", "medium"):
+                                parsed.append({
+                                    "event": ev.get("event", ""),
+                                    "currency": ev.get("currency", ""),
+                                    "impact": impact,
+                                    "time": ev.get("date", ""),
+                                    "country": ev.get("country", ""),
+                                })
+                        api_cache.set(cache_key, parsed, FMP_CACHE_TTL)
+                        self._high_impact_events = parsed
+                        logger.info(f"[MARKET ANALYSIS] FMP calendar retrieved {len(parsed)} events")
+                        return parsed
+            logger.warning("[MARKET ANALYSIS] FMP endpoints require paid subscription — calendar empty")
+            return []
         except Exception as e:
             logger.error(f"FMP calendar error: {e}")
             return []
@@ -247,14 +237,18 @@ class MarketAnalysis:
             return []
 
     async def get_market_sentiment(self, symbol: str) -> Dict:
-        """Combined sentiment from Finnhub (primary) + Alpha Vantage (secondary)."""
+        """Combined sentiment from Alpha Vantage (primary) + Finnhub (secondary)."""
         finnhub = self.get_symbol_news_sentiment(symbol)
         av = self.get_alpha_vantage_sentiment(symbol)
 
-        # Weight Finnhub higher since it's refreshed more often
-        bullish = finnhub["bullish"] * 0.7 + av["bullish"] * 0.3
-        bearish = finnhub["bearish"] * 0.7 + av["bearish"] * 0.3
-        confidence = max(finnhub["confidence"], av["confidence"] * 0.5)
+        # Weight Alpha Vantage higher since it's working
+        bullish = av["bullish"] * 0.7 + finnhub["bullish"] * 0.3
+        bearish = av["bearish"] * 0.7 + finnhub["bearish"] * 0.3
+        confidence = max(av["confidence"], finnhub["confidence"] * 0.5)
+
+        logger.info(
+            f"[MARKET ANALYSIS] Sentiment for {symbol}: bullish={bullish:.2f}, bearish={bearish:.2f}, confidence={confidence:.2f}"
+        )
 
         return {
             "symbol": symbol,
