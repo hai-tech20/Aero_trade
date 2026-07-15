@@ -4,6 +4,9 @@ MetaTrader 5 Bridge — broker-agnostic
 
 import MetaTrader5 as mt5
 import pandas as pd
+import concurrent.futures
+import time
+import threading
 from datetime import datetime
 from typing import Dict, Optional, List
 
@@ -15,24 +18,82 @@ from core.symbols import get_pip_size, symbol_asset_class, pips_to_price_distanc
 class MT5Bridge:
     """Connect to any MT5 broker."""
 
+    _mt5_lock = threading.Lock()
+
     def __init__(self):
         self.connected = False
         self.account_info = {}
 
-    def connect(self, login: int, password: str, server: str, demo: bool = True) -> bool:
+    def _call_mt5_with_timeout(self, mt5_func, *args, timeout=10, **kwargs):
+        """Run an MT5 call in a thread pool with timeout, serialized with a lock."""
+        def wrapped():
+            with MT5Bridge._mt5_lock:
+                return mt5_func(*args, **kwargs)
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(wrapped)
         try:
-            if not mt5.initialize():
-                logger.error(f"MT5 initialize failed: {mt5.last_error()}")
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            logger.error(f"MT5 call timed out after {timeout}s")
+            executor.shutdown(wait=False)
+            raise TimeoutError(f"MT5 call timed out after {timeout}s")
+
+    def connect(self, login: int, password: str, server: str, demo: bool = True, path: str = None) -> bool:
+        try:
+            init_kwargs = {}
+            if path:
+                init_kwargs["path"] = path
+
+            try:
+                def do_init():
+                    return mt5.initialize(**init_kwargs)
+                init_ok = self._call_mt5_with_timeout(do_init, timeout=10)
+            except TimeoutError:
+                logger.error("MT5 initialize timed out — terminal may be stuck on history sync for a broken symbol")
+                logger.error("Try: Right-click symbol in MT5 Market Watch -> Refresh, or clear MT5 history cache")
                 return False
-            authorized = mt5.login(login=login, password=password, server=server)
+
+            if not init_ok:
+                err = mt5.last_error()
+                logger.error(f"MT5 initialize failed: {err}")
+                return False
+
+            try:
+                def do_login():
+                    return mt5.login(login=login, password=password, server=server)
+                authorized = self._call_mt5_with_timeout(do_login, timeout=10)
+            except TimeoutError:
+                logger.error("MT5 login timed out")
+                try:
+                    mt5.shutdown()
+                except Exception:
+                    pass
+                return False
+
             if authorized:
                 self.connected = True
-                self.account_info = mt5.account_info()._asdict()
+                try:
+                    info = mt5.account_info()
+                    if info:
+                        self.account_info = info._asdict()
+                except Exception as e:
+                    logger.error(f"Failed to get account info after login: {e}")
+                    try:
+                        mt5.shutdown()
+                    except Exception:
+                        pass
+                    return False
                 account_type = "DEMO" if demo else "REAL"
                 broker_name = BROKER_CONFIG.get("name") or server
                 logger.success(f"{APP_NAME}: Connected to {broker_name} {account_type} #{login}")
                 return True
-            logger.error(f"Login failed: {mt5.last_error()}")
+
+            err = mt5.last_error()
+            logger.error(f"Login failed: {err}")
+            try:
+                mt5.shutdown()
+            except Exception:
+                pass
             return False
         except Exception as e:
             logger.error(f"Connection error: {e}")
@@ -41,18 +102,26 @@ class MT5Bridge:
     def get_account_info(self) -> Dict:
         if not self.connected:
             return {}
-        info = mt5.account_info()
-        if info:
-            self.account_info = info._asdict()
+        try:
+            def get_info():
+                return mt5.account_info()
+            info = self._call_mt5_with_timeout(get_info, timeout=10)
+            if info:
+                self.account_info = info._asdict()
+        except Exception as e:
+            logger.error(f"Error getting account info: {e}")
         return self.account_info.copy()
 
     def get_symbol_info(self, symbol: str) -> Dict:
         try:
-            info = mt5.symbol_info(symbol)
+            def get_info():
+                return mt5.symbol_info(symbol)
+            info = self._call_mt5_with_timeout(get_info, timeout=10)
             if info is None:
                 return {}
             return info._asdict()
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error getting symbol info for {symbol}: {e}")
             return {}
 
     def _sl_tp_prices(self, symbol: str, order_type: str, price: float, sl_pips: float, tp_pips: float):
@@ -73,14 +142,41 @@ class MT5Bridge:
 
     def place_order(self, symbol: str, order_type: str, volume: float, **kwargs) -> Dict:
         try:
-            symbol_info = mt5.symbol_info(symbol)
+            # Get symbol info with timeout
+            def get_sym_info():
+                return mt5.symbol_info(symbol)
+            symbol_info = self._call_mt5_with_timeout(get_sym_info, timeout=10)
             if symbol_info is None:
                 return {"success": False, "error": f"Symbol {symbol} not found"}
-            if not symbol_info.visible:
-                mt5.symbol_select(symbol, True)
 
-            tick = mt5.symbol_info_tick(symbol)
+            # Ensure symbol is visible/selected with retries and timeout
+            if not symbol_info.visible:
+                for attempt in range(3):
+                    try:
+                        def select_sym():
+                            return mt5.symbol_select(symbol, True)
+                        success = self._call_mt5_with_timeout(select_sym, timeout=5)
+                        if success:
+                            break
+                    except Exception as e:
+                        logger.warning(f"Attempt {attempt+1} to select symbol {symbol} failed: {e}")
+                    time.sleep(0.2)
+
+            # Get tick data with timeout
+            def get_tick():
+                return mt5.symbol_info_tick(symbol)
+            tick = self._call_mt5_with_timeout(get_tick, timeout=10)
+            if tick is None:
+                return {"success": False, "error": f"Could not get tick data for {symbol}"}
+
             price = tick.ask if order_type == "BUY" else tick.bid
+
+            # Determine filling mode (default to IOC, try RETURN if IOC fails)
+            filling_modes = [
+                mt5.ORDER_FILLING_IOC,
+                mt5.ORDER_FILLING_RETURN,
+                mt5.ORDER_FILLING_FOK
+            ]
 
             order = {
                 "action": mt5.TRADE_ACTION_DEAL,
@@ -92,7 +188,7 @@ class MT5Bridge:
                 "magic": kwargs.get("magic", 234000),
                 "comment": kwargs.get("comment", APP_NAME),
                 "type_time": mt5.ORDER_TIME_GTC,
-                "type_filling": mt5.ORDER_FILLING_IOC,
+                "type_filling": None,  # Set per attempt
             }
 
             sl_pips = kwargs.get("stop_loss", 0)
@@ -104,28 +200,54 @@ class MT5Bridge:
                 if tp_pips:
                     order["tp"] = tp_price
 
-            result = mt5.order_send(order)
-            if result.retcode == mt5.TRADE_RETCODE_DONE:
-                logger.trade(f"Order: {order_type} {symbol} {volume} lots @ {price:.5f}")
-                return {
-                    "success": True,
-                    "order_id": result.order,
-                    "ticket": result.deal,
-                    "price": result.price,
-                    "volume": result.volume,
-                }
-            return {"success": False, "error": result.comment, "retcode": result.retcode}
+            # Try each filling mode with timeout
+            last_result = None
+            for filling_mode in filling_modes:
+                order["type_filling"] = filling_mode
+                try:
+                    def send_order():
+                        return mt5.order_send(order)
+                    result = self._call_mt5_with_timeout(send_order, timeout=15)
+                    last_result = result
+                    if result.retcode == mt5.TRADE_RETCODE_DONE:
+                        logger.trade(f"Order: {order_type} {symbol} {volume} lots @ {price:.5f}")
+                        return {
+                            "success": True,
+                            "order_id": result.order,
+                            "ticket": result.deal,
+                            "price": result.price,
+                            "volume": result.volume,
+                        }
+                except Exception as e:
+                    logger.error(f"Order attempt with filling mode {filling_mode} failed: {e}")
+                    continue
+
+            # If all filling modes failed, return last error
+            if last_result:
+                logger.error(f"Order failed (retcode {last_result.retcode}): {last_result.comment}")
+                return {"success": False, "error": last_result.comment, "retcode": last_result.retcode}
+            return {"success": False, "error": "All order attempts failed"}
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            err_msg = f"Order exception: {str(e)}"
+            logger.error(err_msg)
+            return {"success": False, "error": err_msg}
 
     def close_order(self, ticket: int) -> Dict:
         try:
-            position = mt5.positions_get(ticket=ticket)
-            if not position:
+            # Get position with timeout
+            def get_pos():
+                return mt5.positions_get(ticket=ticket)
+            positions = self._call_mt5_with_timeout(get_pos, timeout=10)
+            if not positions:
                 return {"success": False, "error": "Position not found"}
-            position = position[0]
+            position = positions[0]
             close_type = mt5.ORDER_TYPE_SELL if position.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY
-            tick = mt5.symbol_info_tick(position.symbol)
+            # Get tick with timeout
+            def get_tick():
+                return mt5.symbol_info_tick(position.symbol)
+            tick = self._call_mt5_with_timeout(get_tick, timeout=10)
+            if not tick:
+                return {"success": False, "error": "Could not get tick data"}
             price = tick.bid if position.type == mt5.ORDER_TYPE_BUY else tick.ask
             close_request = {
                 "action": mt5.TRADE_ACTION_DEAL,
@@ -140,24 +262,33 @@ class MT5Bridge:
                 "type_time": mt5.ORDER_TIME_GTC,
                 "type_filling": mt5.ORDER_FILLING_IOC,
             }
-            result = mt5.order_send(close_request)
+            # Send order with timeout
+            def send_close():
+                return mt5.order_send(close_request)
+            result = self._call_mt5_with_timeout(send_close, timeout=15)
             if result.retcode == mt5.TRADE_RETCODE_DONE:
                 return {"success": True, "ticket": result.deal, "pnl_usd": position.profit}
             return {"success": False, "error": result.comment}
         except Exception as e:
+            logger.error(f"Close order error: {e}")
             return {"success": False, "error": str(e)}
 
     def get_positions(self, symbol: str = "") -> List[Dict]:
         try:
-            positions = mt5.positions_get(symbol=symbol) if symbol else mt5.positions_get()
+            def get_pos():
+                return mt5.positions_get(symbol=symbol) if symbol else mt5.positions_get()
+            positions = self._call_mt5_with_timeout(get_pos, timeout=10)
             return [p._asdict() for p in positions] if positions else []
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error getting positions: {e}")
             return []
 
     def get_deal_history(self, limit: int = 100) -> List[Dict]:
         try:
             from datetime import timedelta
-            deals = mt5.history_deals_get(datetime.now() - timedelta(days=30), datetime.now())
+            def get_deals():
+                return mt5.history_deals_get(datetime.now() - timedelta(days=30), datetime.now())
+            deals = self._call_mt5_with_timeout(get_deals, timeout=15)
             if not deals:
                 return []
             result = []
@@ -172,12 +303,15 @@ class MT5Bridge:
                     "time": dd.get("time"),
                 })
             return result
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error getting deal history: {e}")
             return []
 
     def get_market_price(self, symbol: str) -> Dict:
         try:
-            tick = mt5.symbol_info_tick(symbol)
+            def get_tick():
+                return mt5.symbol_info_tick(symbol)
+            tick = self._call_mt5_with_timeout(get_tick, timeout=10)
             pip = get_pip_size(symbol)
             return {
                 "symbol": symbol,
@@ -186,12 +320,15 @@ class MT5Bridge:
                 "time": tick.time,
                 "spread": (tick.ask - tick.bid) / pip if pip else 0,
             }
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error getting market price for {symbol}: {e}")
             return {}
 
     def get_all_symbols(self) -> List[str]:
         try:
-            symbols = mt5.symbols_get()
+            def get_symbols():
+                return mt5.symbols_get()
+            symbols = self._call_mt5_with_timeout(get_symbols, timeout=10)
             if symbols is None:
                 return []
             tradeable = []
@@ -211,34 +348,73 @@ class MT5Bridge:
             "1h": mt5.TIMEFRAME_H1, "4h": mt5.TIMEFRAME_H4, "1d": mt5.TIMEFRAME_D1,
         }
 
+    def _fmt_sync_error(self, symbol: str, context: str = "history") -> str:
+        return (
+            f"MT5 couldn't sync price {context} for {symbol} — try refreshing the symbol in MT5 "
+            "(File → Open Data Folder → clear the Bases cache for this server, "
+            "or right-click the symbol in Market Watch → Refresh) and reconnect."
+        )
+
     def get_historical_data(self, symbol: str, timeframe: str, count: int = 1000) -> Optional[pd.DataFrame]:
         try:
             mt5_tf = self._tf_map().get(timeframe, mt5.TIMEFRAME_M5)
-            rates = mt5.copy_rates_from_pos(symbol, mt5_tf, 0, count)
-            if rates is None or len(rates) == 0:
-                return None
-            df = pd.DataFrame(rates)
-            df["time"] = pd.to_datetime(df["time"], unit="s")
-            df.set_index("time", inplace=True)
-            df.columns = [c.lower() for c in df.columns]
-            return df
+            for attempt in range(3):
+                def get_rates():
+                    return mt5.copy_rates_from_pos(symbol, mt5_tf, 0, count)
+                rates = self._call_mt5_with_timeout(get_rates, timeout=15)
+                if rates is not None and len(rates) > 0:
+                    df = pd.DataFrame(rates)
+                    df["time"] = pd.to_datetime(df["time"], unit="s")
+                    df.set_index("time", inplace=True)
+                    df.columns = [c.lower() for c in df.columns]
+                    return df
+                err = mt5.last_error()
+                if err and isinstance(err, tuple) and len(err) > 0 and err[0] in (1, 2, 5, 6):
+                    logger.error(self._fmt_sync_error(symbol))
+                    return None
+                if attempt < 2:
+                    time.sleep(0.5)
+                    try:
+                        mt5.last_error()
+                    except Exception:
+                        pass
+            logger.error(f"Historical data sync failed for {symbol}: {err}")
+            logger.error("Try: Right-click symbol in MT5 Market Watch -> Refresh, or clear MT5 history cache")
+            return None
         except Exception as e:
             logger.error(f"Historical data error {symbol}: {e}")
+            logger.error("Try: Right-click symbol in MT5 Market Watch -> Refresh, or clear MT5 history cache")
             return None
 
     def get_historical_data_before(self, symbol: str, timeframe: str, before_dt: datetime, count: int = 5000) -> Optional[pd.DataFrame]:
         try:
             mt5_tf = self._tf_map().get(timeframe, mt5.TIMEFRAME_M5)
-            rates = mt5.copy_rates_from(symbol, mt5_tf, before_dt, count)
-            if rates is None or len(rates) == 0:
-                return None
-            df = pd.DataFrame(rates)
-            df["time"] = pd.to_datetime(df["time"], unit="s")
-            df.set_index("time", inplace=True)
-            df.columns = [c.lower() for c in df.columns]
-            return df
+            for attempt in range(3):
+                def get_rates():
+                    return mt5.copy_rates_from(symbol, mt5_tf, before_dt, count)
+                rates = self._call_mt5_with_timeout(get_rates, timeout=15)
+                if rates is not None and len(rates) > 0:
+                    df = pd.DataFrame(rates)
+                    df["time"] = pd.to_datetime(df["time"], unit="s")
+                    df.set_index("time", inplace=True)
+                    df.columns = [c.lower() for c in df.columns]
+                    return df
+                err = mt5.last_error()
+                if err and isinstance(err, tuple) and len(err) > 0 and err[0] in (1, 2, 5, 6):
+                    logger.error(self._fmt_sync_error(symbol))
+                    return None
+                if attempt < 2:
+                    time.sleep(0.5)
+                    try:
+                        mt5.last_error()
+                    except Exception:
+                        pass
+            logger.error(f"Paged history sync failed for {symbol}: {err}")
+            logger.error("Try: Right-click symbol in MT5 Market Watch -> Refresh, or clear MT5 history cache")
+            return None
         except Exception as e:
             logger.error(f"Paged history error {symbol}: {e}")
+            logger.error("Try: Right-click symbol in MT5 Market Watch -> Refresh, or clear MT5 history cache")
             return None
 
     def get_tick_value(self, symbol: str) -> float:
@@ -253,7 +429,10 @@ class MT5Bridge:
         return 10.0
 
     def disconnect(self):
-        mt5.shutdown()
+        try:
+            mt5.shutdown()
+        except Exception:
+            pass
         self.connected = False
         logger.info("Disconnected from MT5")
 

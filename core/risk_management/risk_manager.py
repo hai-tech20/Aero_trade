@@ -1,6 +1,7 @@
 """Risk Management System — AERO TRADE"""
 
 import numpy as np
+import pandas as pd
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 
@@ -21,7 +22,44 @@ class RiskManager:
         }
         self.trading_halted = False
         self.halt_reason = ""
+        self.volatility_profiles: Dict[str, Dict] = {}
         logger.info("Risk Manager initialized")
+
+    def _compute_adx(self, df: pd.DataFrame, period: int = 14) -> float:
+        if df is None or len(df) < period + 1:
+            return 0.0
+        try:
+            high = df["high"].values if "high" in df.columns else df["High"].values
+            low = df["low"].values if "low" in df.columns else df["Low"].values
+            close = df["close"].values if "close" in df.columns else df["Close"].values
+            plus_dm = np.maximum(high[1:] - high[:-1], 0)
+            minus_dm = np.maximum(low[:-1] - low[1:], 0)
+            tr = np.maximum(np.maximum(high[1:] - low[1:], np.abs(high[1:] - close[:-1])), np.abs(low[1:] - close[:-1]))
+            atr = pd.Series(tr).rolling(window=period).mean().iloc[-1] if len(tr) >= period else np.mean(tr)
+            plus_di = 100 * pd.Series(plus_dm).rolling(window=period).mean() / (atr + 1e-9)
+            minus_di = 100 * pd.Series(minus_dm).rolling(window=period).mean() / (atr + 1e-9)
+            dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di + 1e-9)
+            adx = float(pd.Series(dx).rolling(window=period).mean().iloc[-1]) if len(dx) >= period else float(np.mean(dx))
+            return adx
+        except Exception:
+            return 0.0
+
+    def check_trend_filter(self, symbol: str, df: pd.DataFrame, adx_threshold: float = 20.0) -> Tuple[bool, str]:
+        adx = self._compute_adx(df)
+        if adx < adx_threshold:
+            return False, f"ADX {adx:.1f} below threshold {adx_threshold} — trend-following entry suppressed (choppy market)"
+        return True, f"ADX {adx:.1f} — trend-following entry allowed"
+
+    def update_volatility_profile(self, symbol: str, df: pd.DataFrame):
+        try:
+            from data.volatility_profiler import compute_volatility_profile, symbol_asset_class
+            cls = symbol_asset_class(symbol)
+            self.volatility_profiles[symbol] = compute_volatility_profile(df, is_crypto=(cls == "crypto"))
+        except Exception as e:
+            logger.error(f"Failed to update volatility profile for {symbol}: {e}")
+
+    def get_volatility_profile(self, symbol: str) -> Dict:
+        return self.volatility_profiles.get(symbol, {})
 
     def calculate_dynamic_position_size(
         self,

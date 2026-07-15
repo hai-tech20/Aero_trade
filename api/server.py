@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import threading
 from typing import Dict, Optional
 from contextlib import asynccontextmanager
 
@@ -32,6 +33,7 @@ class CreateAccountRequest(BaseModel):
     password: str
     is_demo: bool = True
     custom_server: str = ""
+    mt5_path: Optional[str] = None
 
 
 class LiveModeRequest(BaseModel):
@@ -65,14 +67,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-assets_path = Path("assets")
-if assets_path.exists():
-    app.mount("/assets", StaticFiles(directory="assets"), name="assets")
-
-ui_dist = Path("ui/dist")
-if ui_dist.exists():
-    app.mount("/", StaticFiles(directory="ui/dist", html=True), name="ui")
-
 
 @app.get("/api/health")
 def health():
@@ -91,11 +85,11 @@ def create_account_endpoint(req: CreateAccountRequest):
     if not server:
         raise HTTPException(400, "Server name required for custom broker")
 
-    ok, msg, info = MT5BrokerClient.verify_credentials(req.login, req.password, server, req.is_demo)
+    ok, msg, info = MT5BrokerClient.verify_credentials(req.login, req.password, server, req.is_demo, path=req.mt5_path)
     if not ok:
         raise HTTPException(401, msg)
 
-    account_id = create_account(req.broker_id, req.login, req.password, server, req.is_demo, broker.display_name)
+    account_id = create_account(req.broker_id, req.login, req.password, server, req.is_demo, broker.display_name, req.mt5_path)
     BROKER_CONFIG["name"] = broker.display_name
     return {
         "account_id": account_id,
@@ -117,15 +111,36 @@ def get_accounts():
 @app.get("/accounts/{account_id}")
 async def get_account(account_id: str):
     try:
-        creds = load_broker_credentials(account_id)
         meta = get_account_meta(account_id)
+        
+        if account_id in _bots:
+            bot = _bots[account_id]
+            info = bot.account_info or {}
+            positions = []
+            if bot.broker and bot.broker.connected:
+                positions = await bot.broker.get_open_orders()
+            return {
+                **info,
+                "account_id": account_id,
+                "is_demo": meta.get("is_demo", True),
+                "live_trading_enabled": meta.get("live_trading_enabled", False),
+                "open_positions_count": len(positions),
+                "broker": meta.get("broker_id", ""),
+            }
+        
+        creds = load_broker_credentials(account_id)
         client = MT5BrokerClient(account_id)
-        await client.connect_with_credentials(creds)
+        try:
+            await asyncio.wait_for(client.connect_with_credentials(creds), timeout=10)
+        except asyncio.TimeoutError:
+            raise HTTPException(504, "MT5 connection timed out — terminal may be stuck on history sync. Try restarting MT5 and reconnecting.")
+        if not client.connected:
+            raise HTTPException(502, "Failed to connect to MT5 terminal")
         info = await client.get_account_info()
-        await client.disconnect()
         positions = []
-        if client.mt5_bridge:
+        if client.mt5_bridge and client.connected:
             positions = client.mt5_bridge.get_positions()
+        await client.disconnect()
         return {
             **info,
             "account_id": account_id,
@@ -136,6 +151,8 @@ async def get_account(account_id: str):
         }
     except KeyError:
         raise HTTPException(404, "Account not found")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, str(e))
 
@@ -143,14 +160,30 @@ async def get_account(account_id: str):
 @app.get("/accounts/{account_id}/positions")
 async def get_positions(account_id: str):
     try:
+        if account_id in _bots:
+            bot = _bots[account_id]
+            orders = []
+            if bot.broker and bot.broker.connected:
+                orders = await bot.broker.get_open_orders()
+            return orders
+        
         creds = load_broker_credentials(account_id)
         client = MT5BrokerClient(account_id)
-        await client.connect_with_credentials(creds)
+        try:
+            await asyncio.wait_for(client.connect_with_credentials(creds), timeout=10)
+        except asyncio.TimeoutError:
+            raise HTTPException(504, "MT5 connection timed out — terminal may be stuck on history sync. Try restarting MT5 and reconnecting.")
+        if not client.connected:
+            raise HTTPException(502, "Failed to connect to MT5 terminal")
         orders = await client.get_open_orders()
         await client.disconnect()
         return orders
     except KeyError:
         raise HTTPException(404, "Account not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
 
 @app.get("/accounts/{account_id}/trades")
@@ -160,20 +193,78 @@ def get_trades(account_id: str, limit: int = 100):
     return {"trades": trades, "summary": summary}
 
 
+@app.get("/accounts/{account_id}/activity")
+def get_activity(account_id: str, limit: int = 50):
+    if account_id not in _bots:
+        return {"activity": []}
+    return {"activity": _bots[account_id].get_activity(limit=limit)}
+
+
+@app.get("/debug/mt5-test")
+def debug_mt5_test():
+    try:
+        from core.broker.credential_store import load_broker_credentials
+        creds = load_broker_credentials('f806d8ec-84ea-4185-8657-a0f13f07a09c')
+        from core.broker.mt5_broker_client import MT5BrokerClient
+        client = MT5BrokerClient('debug')
+        import asyncio
+        loop = asyncio.get_event_loop()
+        ok = loop.run_until_complete(client.connect_with_credentials(creds))
+        result = {
+            "connected": client.connected,
+            "use_mt5": client.use_mt5,
+            "mt5_bridge": client.mt5_bridge is not None,
+        }
+        if client.mt5_bridge:
+            df = client.mt5_bridge.get_historical_data("EURUSD", "1min", count=10)
+            result["historical_data"] = df is not None
+            result["bars_count"] = len(df) if df is not None else 0
+        return result
+    except Exception as e:
+        return {"error": str(e)}
+
+
+_bot_threads: Dict[str, threading.Thread] = {}
+_bot_loops: Dict[str, asyncio.AbstractEventLoop] = {}
+
+
+def _run_bot_in_thread(account_id: str, creds: dict):
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    _bot_loops[account_id] = loop
+
+    async def _bot_main():
+        try:
+            bot = AeroTradeBot(account_id)
+            await bot.initialize(creds)
+            _bots[account_id] = bot
+            _bot_tasks[account_id] = asyncio.create_task(bot.run())
+        except Exception as e:
+            logger.error(f"Failed to start bot for {account_id}: {e}")
+
+    loop.run_until_complete(_bot_main())
+    loop.close()
+
+
 @app.post("/accounts/{account_id}/start")
 async def start_trading(account_id: str):
     if account_id in _bot_tasks and not _bot_tasks[account_id].done():
         return {"status": "already_running"}
-    try:
-        creds = load_broker_credentials(account_id)
-        creds["broker_id"] = get_account_meta(account_id).get("broker_id", "custom")
-        bot = AeroTradeBot(account_id)
-        await bot.initialize(creds)
-        _bots[account_id] = bot
-        _bot_tasks[account_id] = asyncio.create_task(bot.run())
-        return {"status": "started"}
-    except Exception as e:
-        raise HTTPException(500, str(e))
+
+    if account_id in _bot_threads and _bot_threads[account_id].is_alive():
+        return {"status": "already_running"}
+
+    creds = load_broker_credentials(account_id)
+    creds["broker_id"] = get_account_meta(account_id).get("broker_id", "custom")
+
+    thread = threading.Thread(
+        target=_run_bot_in_thread,
+        args=(account_id, creds),
+        daemon=True,
+    )
+    thread.start()
+    _bot_threads[account_id] = thread
+    return {"status": "started"}
 
 
 @app.post("/accounts/{account_id}/stop")
@@ -272,6 +363,12 @@ async def websocket_stream(websocket: WebSocket, account_id: str):
             await asyncio.sleep(2)
     except WebSocketDisconnect:
         pass
+
+
+# Mount static files AFTER API routes
+ui_dist = Path("ui/dist")
+if ui_dist.exists():
+    app.mount("/", StaticFiles(directory="ui/dist", html=True), name="ui")
 
 
 def run_server(host: str = "0.0.0.0", port: int = 8000):

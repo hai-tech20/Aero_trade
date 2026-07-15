@@ -19,6 +19,15 @@ from decision_maker.signal_fusion import signal_fusion
 from core.risk_management.risk_manager import risk_manager
 from data.market_data import market_data
 
+
+STRESS_TEST_EVENTS = {
+    "2008 Financial Crisis Trough": "2008-10-08",
+    "2010 Flash Crash": "2010-05-06",
+    "2015 Swiss Franc Peg Shock": "2015-01-15",
+    "2020 COVID-19 Crash": "2020-03-12",
+    "2022 FTX Collapse": "2022-11-21",
+}
+
 class BacktestEngine:
     """Backtesting engine for strategy evaluation"""
     
@@ -31,6 +40,9 @@ class BacktestEngine:
         
         # Performance metrics
         self.metrics = {}
+        self.data_source_tag = "broker"
+        self.data_source = "broker"
+        self.data_source = "broker"
         
         logger.info(f"Backtest Engine initialized with ${initial_balance:,.2f}")
     
@@ -87,17 +99,26 @@ class BacktestEngine:
     
     async def _load_historical_data(self, symbol: str, timeframe: str,
                                   start_date: Optional[str], end_date: Optional[str]) -> Optional[pd.DataFrame]:
-        """Load historical data — prefers real parquet history."""
+        """Load historical data — prefers real parquet history, then yfinance, then market_data."""
         try:
             from config.settings import DATA_DIR
             history_path = DATA_DIR / f"{symbol}_{timeframe}_history.parquet"
             if history_path.exists():
                 logger.info(f"Loading real history: {history_path}")
                 df = pd.read_parquet(history_path)
+                self.data_source = "broker"
+                self.data_source_tag = "broker"
             else:
-                await market_data.connect()
-                df = await market_data.get_latest_data(symbol, timeframe, lookback=10000)
-                logger.warning("[MOCK DATA] Backtest using synthetic data — run download_all_history.py first")
+                yfinance_path = DATA_DIR / f"{symbol}_1d_yfinance.parquet"
+                if yfinance_path.exists():
+                    logger.info(f"Loading yfinance history: {yfinance_path}")
+                    df = pd.read_parquet(yfinance_path)
+                    self.data_source = "yfinance"
+                    self.data_source_tag = "yfinance-supplementary"
+                else:
+                    await market_data.connect()
+                    df = await market_data.get_latest_data(symbol, timeframe, lookback=10000)
+                    logger.warning("[MOCK DATA] Backtest using synthetic data — run download_all_history.py or use yfinance")
             
             if df is None:
                 logger.error("No data available")
@@ -244,33 +265,33 @@ class BacktestEngine:
     
     def _close_position(self, position: Dict, exit_price: float, exit_time, reason: str):
         """Close a position and calculate P&L"""
-        # Calculate P&L
+        fee_rate = 0.001
+        entry_price = position['entry_price']
+        size = position['size']
         if position['direction'] == 'BUY':
-            pnl_pips = (exit_price - position['entry_price']) * 10000
-        else:  # SELL
-            pnl_pips = (position['entry_price'] - exit_price) * 10000
-        
-        # Simplified: 1 pip = $10 per lot
-        pnl_usd = pnl_pips * 10 * position['size']
-        
-        # Update balance
+            pnl_pips = (exit_price - entry_price) * 10000
+        else:
+            pnl_pips = (entry_price - exit_price) * 10000
+        gross_pnl = pnl_pips * 10 * size
+        fees = (entry_price * size + exit_price * size) * fee_rate
+        slippage = abs(exit_price - entry_price) * size * 0.0001
+        pnl_usd = gross_pnl - fees - slippage
         self.balance += pnl_usd
-        
-        # Record trade
         trade = {
             'entry_time': position['entry_time'],
             'exit_time': exit_time,
             'symbol': position['symbol'],
             'direction': position['direction'],
-            'entry_price': position['entry_price'],
+            'entry_price': entry_price,
             'exit_price': exit_price,
-            'size': position['size'],
+            'size': size,
             'pnl_pips': pnl_pips,
             'pnl_usd': pnl_usd,
+            'fees': fees,
+            'slippage': slippage,
             'reason': reason,
             'ai_confidence': position.get('ai_confidence', 0)
         }
-        
         self.trade_history.append(trade)
         risk_manager.record_trade(trade)
     
@@ -325,13 +346,16 @@ class BacktestEngine:
             'losing_trades': losing_trades,
             'win_rate_pct': win_rate,
             'total_pnl': total_pnl,
+            'total_fees': sum(t.get('fees', 0) for t in self.trade_history),
+            'total_slippage': sum(t.get('slippage', 0) for t in self.trade_history),
             'profit_factor': profit_factor,
             'avg_win': avg_win,
             'avg_loss': avg_loss,
             'expectancy': expectancy,
             'max_drawdown_pct': max_drawdown,
             'sharpe_ratio': sharpe_ratio,
-            'avg_ai_confidence': np.mean([t.get('ai_confidence', 0) for t in self.trade_history])
+            'avg_ai_confidence': np.mean([t.get('ai_confidence', 0) for t in self.trade_history]),
+            'data_source': self.data_source_tag,
         }
     
     def _print_results(self):
@@ -339,6 +363,7 @@ class BacktestEngine:
         logger.info("=" * 60)
         logger.info("📊 BACKTEST RESULTS")
         logger.info("=" * 60)
+        logger.info(f"Data source: {self.data_source_tag}")
         
         metrics = self.metrics
         
@@ -356,6 +381,8 @@ class BacktestEngine:
         logger.info(f"Win Rate: {metrics['win_rate_pct']:.1f}%")
         logger.info("")
         logger.info(f"Total P&L: ${metrics['total_pnl']:+,.2f}")
+        logger.info(f"Total Fees: ${metrics.get('total_fees', 0):+,.2f}")
+        logger.info(f"Total Slippage: ${metrics.get('total_slippage', 0):+,.2f}")
         logger.info(f"Profit Factor: {metrics['profit_factor']:.2f}")
         logger.info(f"Expectancy: ${metrics['expectancy']:+.2f}")
         logger.info("")

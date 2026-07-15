@@ -65,6 +65,7 @@ def save_broker_credentials(
     server: str,
     demo: bool,
     broker_id: str = "custom",
+    mt5_path: str = None,
 ) -> None:
     payload = json.dumps({
         "login": login,
@@ -72,6 +73,7 @@ def save_broker_credentials(
         "server": server,
         "demo": demo,
         "broker_id": broker_id,
+        "mt5_path": mt5_path,
     })
     if HAS_KEYRING:
         keyring.set_password(SERVICE_NAME, account_id, payload)
@@ -101,9 +103,10 @@ def create_account(
     server: str,
     is_demo: bool,
     display_name: str = "",
+    mt5_path: str = None,
 ) -> str:
     account_id = str(uuid.uuid4())
-    save_broker_credentials(account_id, login, password, server, is_demo, broker_id)
+    save_broker_credentials(account_id, login, password, server, is_demo, broker_id, mt5_path)
     meta = _load_accounts_meta()
     meta["accounts"][account_id] = {
         "broker_id": broker_id,

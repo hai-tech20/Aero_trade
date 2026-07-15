@@ -475,7 +475,7 @@ class SniperLogic:
             if sweep and sweep.swept:
                 signal['liquidity_sweep'] = sweep
                 signal['direction'] = sweep.direction
-                signal['confidence'] += sweep.strength * 0.3
+                signal['confidence'] += sweep.strength * 0.35
             
             # 2. Check for CHoCH
             choch = self.detect_choch(df_1min, df_5min, symbol)
@@ -484,37 +484,39 @@ class SniperLogic:
                 if choch.direction == 'BULLISH':
                     if signal['direction'] is None:
                         signal['direction'] = 'BUY'
-                    signal['confidence'] += 0.4
+                    signal['confidence'] += 0.35
                 elif choch.direction == 'BEARISH':
                     if signal['direction'] is None:
                         signal['direction'] = 'SELL'
-                    signal['confidence'] += 0.4
+                    signal['confidence'] += 0.35
             
-            # 3. Check for order block entry
-            if signal['direction']:
-                current_price = df_1min['close'].iloc[-1]
-                ob = self.check_order_block_entry(symbol, current_price, signal['direction'])
-                if ob:
-                    # Optional: require a rejection candle on the 1m when touching the OB
-                    if self.ob_retest_required:
-                        last_c = df_1min.iloc[-1]
-                        if not self._is_rejection_candle(last_c, signal["direction"]):
-                            # Touch without rejection is lower quality; keep signal but penalize confidence
-                            signal["confidence"] -= 0.10
-                        else:
-                            signal["confidence"] += 0.05
-
-                    signal['order_block'] = ob
-                    signal['confidence'] += ob.strength * 0.3
-                    signal['entry_price'] = ob.price_low if ob.is_bullish else ob.price_high
-                    
-                    # Calculate SL/TP
-                    if ob.is_bullish:
-                        signal['stop_loss'] = ob.price_low * 0.9995  # 0.05% below OB
-                        signal['take_profit'] = ob.price_high * 1.002  # 0.2% above OB
-                    else:
-                        signal['stop_loss'] = ob.price_high * 1.0005  # 0.05% above OB
-                        signal['take_profit'] = ob.price_low * 0.998  # 0.2% below OB
+            # 3. Check for order block entry OR just use recent price action
+            current_price = df_1min['close'].iloc[-1]
+            ob = self.check_order_block_entry(symbol, current_price, signal['direction'])
+            if ob:
+                signal['order_block'] = ob
+                signal['confidence'] += ob.strength * 0.3
+                signal['entry_price'] = ob.price_low if ob.is_bullish else ob.price_high
+                
+                # Calculate SL/TP
+                if ob.is_bullish:
+                    signal['stop_loss'] = ob.price_low * 0.9995  # 0.05% below OB
+                    signal['take_profit'] = ob.price_high * 1.002  # 0.2% above OB
+                else:
+                    signal['stop_loss'] = ob.price_high * 1.0005  # 0.05% above OB
+                    signal['take_profit'] = ob.price_low * 0.998  # 0.2% below OB
+            
+            # If no direction yet, add a simple moving average crossover check
+            if signal['direction'] is None and len(df_1min) >= 20:
+                close = df_1min['close'].values
+                ma5 = np.mean(close[-5:])
+                ma20 = np.mean(close[-20:])
+                if ma5 > ma20 and close[-1] > ma5:
+                    signal['direction'] = 'BUY'
+                    signal['confidence'] += 0.4
+                elif ma5 < ma20 and close[-1] < ma5:
+                    signal['direction'] = 'SELL'
+                    signal['confidence'] += 0.4
             
             # Build reason string
             reasons = []
@@ -524,6 +526,8 @@ class SniperLogic:
                 reasons.append(f"CHoCH ({choch.direction})")
             if signal.get('order_block'):
                 reasons.append("Order block entry")
+            if signal['direction'] and not reasons:
+                reasons.append("Moving average signal")
             
             signal['reason'] = " | ".join(reasons) if reasons else "No signal"
             

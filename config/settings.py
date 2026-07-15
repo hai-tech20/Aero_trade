@@ -34,27 +34,34 @@ TRADING_CONFIG: Dict[str, Any] = {
     "immediate_execution": True,
     "aggressive_mode": False,
     "news_blackout_minutes": 15,
+    "max_symbols": 50,
 }
 
 AI_CONFIG: Dict[str, Any] = {
     "enabled": True,
-    "min_confidence": 0.55,
+    "min_confidence": 0.30,
     "update_interval": 5,
 }
 
 SIGNAL_FUSION_CONFIG: Dict[str, Any] = {
     "weights": {
-        "ai": 0.30,
-        "technical": 0.20,
-        "price_action": 0.15,
+        "ai": 0.25,
+        "technical": 0.25,
+        "price_action": 0.30,
         "market_structure": 0.10,
-        "sentiment": 0.25,
+        "sentiment": 0.10,
     },
     "min_confidence": {
-        "ai": 0.65,
-        "technical": 0.60,
-        "combined": 0.65,
+        "ai": 0.30,
+        "technical": 0.30,
+        "price_action": 0.20,
+        "sentiment": 0.10,
+        "combined": 0.35,
     },
+    "min_sources": 2,
+    "time_window_seconds": 300,
+    "decay_factor": 0.95,
+    "require_confirmation": True,
 }
 
 RISK_CONFIG: Dict[str, Any] = {

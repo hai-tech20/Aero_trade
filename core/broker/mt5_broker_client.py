@@ -37,6 +37,7 @@ class MT5BrokerClient:
         server: str = None,
         demo: bool = True,
         broker_id: str = "custom",
+        mt5_path: str = None,
     ) -> bool:
         try:
             self.is_demo = demo
@@ -45,7 +46,7 @@ class MT5BrokerClient:
                 BROKER_CONFIG["name"] = self.broker_preset.display_name
 
             if login and password and server:
-                return await self._connect_mt5(login, password, server, demo)
+                return await self._connect_mt5(login, password, server, demo, mt5_path)
             return await self._connect_mock(demo)
         except Exception as e:
             logger.error(f"Connection failed: {e}")
@@ -58,13 +59,27 @@ class MT5BrokerClient:
             server=creds["server"],
             demo=creds.get("demo", True),
             broker_id=creds.get("broker_id", "custom"),
+            mt5_path=creds.get("mt5_path"),
         )
 
-    async def _connect_mt5(self, login: int, password: str, server: str, demo: bool) -> bool:
+    async def _connect_mt5(self, login: int, password: str, server: str, demo: bool, path: str = None) -> bool:
         try:
-            import MetaTrader5  # noqa: F401
+            import MetaTrader5
             self.mt5_bridge = MT5Bridge()
-            success = self.mt5_bridge.connect(login=login, password=password, server=server, demo=demo)
+            loop = asyncio.get_event_loop()
+            try:
+                success = await asyncio.wait_for(
+                    loop.run_in_executor(None, self.mt5_bridge.connect, login, password, server, demo, path),
+                    timeout=15,
+                )
+            except asyncio.TimeoutError:
+                logger.error("MT5 connect timed out — terminal may be stuck on history sync for a broken symbol")
+                logger.error("Try: Right-click symbol in MT5 Market Watch -> Refresh, or clear MT5 history cache")
+                try:
+                    self.mt5_bridge.disconnect()
+                except Exception:
+                    pass
+                return False
             if success:
                 self.use_mt5 = True
                 self.account_info = self.mt5_bridge.get_account_info()
@@ -101,13 +116,13 @@ class MT5BrokerClient:
         return True
 
     @staticmethod
-    def verify_credentials(login: int, password: str, server: str, demo: bool = True, timeout: int = 15) -> tuple:
+    def verify_credentials(login: int, password: str, server: str, demo: bool = True, timeout: int = 15, path: str = None) -> tuple:
         """Synchronous credential verification with timeout."""
         bridge = MT5Bridge()
         try:
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor() as pool:
-                future = pool.submit(bridge.connect, login, password, server, demo)
+                future = pool.submit(bridge.connect, login, password, server, demo, path)
                 success = future.result(timeout=timeout)
             if not success:
                 return False, "Login failed — check account number, password, and server name", {}
@@ -116,7 +131,7 @@ class MT5BrokerClient:
             return True, "Connected", info
         except concurrent.futures.TimeoutError:
             bridge.disconnect()
-            return False, "Connection timed out — is MT5 terminal running?", {}
+            return False, "Connection timed out — MT5 terminal may be stuck syncing history for a broken symbol. Try restarting MT5 and reconnecting.", {}
         except Exception as e:
             bridge.disconnect()
             return False, str(e), {}

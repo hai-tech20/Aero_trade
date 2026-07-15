@@ -273,10 +273,30 @@ class MarketAnalysis:
             events = self.get_economic_calendar()
             blackout, blackout_reason = self.is_news_blackout(symbol)
 
+            # If sentiment is neutral (no API keys), use a simple price-based sentiment
+            if sentiment.get("confidence", 0.0) <= 0.1:
+                from data.market_data import MarketDataFeed
+                feed = MarketDataFeed()
+                try:
+                    df = await feed.get_latest_data(symbol, "5min", 50)
+                    if df is not None and len(df) >= 20:
+                        close = df["close"].values
+                        recent_change = (close[-1] - close[-20]) / close[-20]
+                        if recent_change > 0.001:
+                            sentiment["bullish"] = 0.6
+                            sentiment["bearish"] = 0.4
+                            sentiment["confidence"] = 0.3
+                        elif recent_change < -0.001:
+                            sentiment["bullish"] = 0.4
+                            sentiment["bearish"] = 0.6
+                            sentiment["confidence"] = 0.3
+                except Exception:
+                    pass
+
             bias = "neutral"
-            if sentiment.get("bullish", 0.5) > 0.55:
+            if sentiment.get("bullish", 0.5) > 0.5:
                 bias = "bullish"
-            elif sentiment.get("bearish", 0.5) > 0.55:
+            elif sentiment.get("bearish", 0.5) > 0.5:
                 bias = "bearish"
 
             return {

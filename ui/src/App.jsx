@@ -4,9 +4,8 @@ const API = ''
 
 function Logo({ size = 48 }) {
   return (
-    <img src="/assets/branding/aero_trade_logo.png" alt="AERO TRADE"
-      style={{ height: size, objectFit: 'contain' }}
-      onError={(e) => { e.target.src = '/aero_trade_logo.png' }} />
+    <img src="/aero_trade_logo.png" alt="AERO TRADE"
+      style={{ height: size, objectFit: 'contain' }} />
   )
 }
 
@@ -51,6 +50,7 @@ function CredentialEntry({ broker, onSuccess, onBack }) {
   const [customServer, setCustomServer] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -87,7 +87,21 @@ function CredentialEntry({ broker, onSuccess, onBack }) {
       </header>
       <form className="form" onSubmit={handleSubmit}>
         <label>Account Number<input value={login} onChange={e => setLogin(e.target.value)} required /></label>
-        <label>Password<input type="password" value={password} onChange={e => setPassword(e.target.value)} required /></label>
+        <label>Password
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <input 
+              type={showPassword ? "text" : "password"} 
+              value={password} 
+              onChange={e => setPassword(e.target.value)} 
+              required 
+              style={{ flex: 1 }}
+            />
+          </div>
+        </label>
+        <label className="toggle">
+          <input type="checkbox" checked={showPassword} onChange={e => setShowPassword(e.target.checked)} />
+          Show Password
+        </label>
         {broker.id === 'custom' && (
           <label>Server Name<input value={customServer} onChange={e => setCustomServer(e.target.value)} required /></label>
         )}
@@ -107,24 +121,60 @@ function Dashboard({ account, onSettings }) {
   const [positions, setPositions] = useState([])
   const [trades, setTrades] = useState({ trades: [], summary: {} })
   const [running, setRunning] = useState(false)
+  const [activity, setActivity] = useState([])
+  const [toggling, setToggling] = useState(false)
+  const [error, setError] = useState('')
 
   useEffect(() => {
     const id = account.account_id
-    const load = () => {
-      fetch(`${API}/accounts/${id}`).then(r => r.json()).then(setInfo).catch(() => {})
-      fetch(`${API}/accounts/${id}/positions`).then(r => r.json()).then(setPositions).catch(() => {})
-      fetch(`${API}/accounts/${id}/trades`).then(r => r.json()).then(setTrades).catch(() => {})
+    let mounted = true
+    const load = async () => {
+      try {
+        const [accRes, posRes, tradesRes, actRes] = await Promise.all([
+          fetch(`${API}/accounts/${id}`).then(r => { if (!r.ok) throw new Error(); return r.json(); }).catch(() => null),
+          fetch(`${API}/accounts/${id}/positions`).then(r => { if (!r.ok) throw new Error(); return r.json(); }).catch(() => null),
+          fetch(`${API}/accounts/${id}/trades`).then(r => { if (!r.ok) throw new Error(); return r.json(); }).catch(() => null),
+          fetch(`${API}/accounts/${id}/activity?limit=50`).then(r => { if (!r.ok) throw new Error(); return r.json(); }).catch(() => ({ activity: [] })),
+        ])
+        if (!mounted) return
+        if (accRes) setInfo(prev => ({ ...prev, ...accRes }))
+        if (posRes) setPositions(Array.isArray(posRes) ? posRes : [])
+        if (tradesRes) setTrades(tradesRes)
+        if (actRes) setActivity(actRes.activity || [])
+        
+        if (!toggling) {
+          const isRunning = actRes && actRes.activity && actRes.activity.length > 0 && actRes.activity.some(a => a.message && a.message.includes('cycle'))
+          setRunning(isRunning)
+        }
+      } catch (e) {
+        // silent fail for polling
+      }
     }
     load()
     const iv = setInterval(load, 5000)
-    return () => clearInterval(iv)
+    return () => { mounted = false; clearInterval(iv) }
   }, [account.account_id])
 
   async function toggleBot() {
     const id = account.account_id
-    const endpoint = running ? 'stop' : 'start'
-    await fetch(`${API}/accounts/${id}/${endpoint}`, { method: 'POST' })
-    setRunning(!running)
+    setToggling(true)
+    setError('')
+    try {
+      const endpoint = running ? 'stop' : 'start'
+      const res = await fetch(`${API}/accounts/${id}/${endpoint}`, { method: 'POST' })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.detail || `Request failed with ${res.status}`)
+      }
+      await new Promise(r => setTimeout(r, 800))
+      const actRes = await fetch(`${API}/accounts/${id}/activity?limit=3`).then(r => r.json()).catch(() => ({ activity: [] }))
+      const isRunning = actRes.activity && actRes.activity.some(a => a.message && a.message.includes('cycle'))
+      setRunning(isRunning)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setToggling(false)
+    }
   }
 
   const s = trades.summary || {}
@@ -148,9 +198,10 @@ function Dashboard({ account, onSettings }) {
         <div className="stat-card"><span>Total P&L</span><strong className={s.total_pnl >= 0 ? 'profit' : 'loss'}>${(s.total_pnl || 0).toFixed(2)}</strong></div>
       </div>
 
-      <button className={`bot-toggle ${running ? 'stop' : 'start'}`} onClick={toggleBot}>
-        {running ? '■ Stop Trading' : '▶ Start Trading'}
+      <button className={`bot-toggle ${running ? 'stop' : 'start'}`} onClick={toggleBot} disabled={toggling}>
+        {toggling ? '...' : (running ? '■ Stop Trading' : '▶ Start Trading')}
       </button>
+      {error && <div className="error">{error}</div>}
 
       <section>
         <h3>Open Positions ({positions.length})</h3>
@@ -175,6 +226,20 @@ function Dashboard({ account, onSettings }) {
             </span>
           </div>
         ))}
+      </section>
+
+      <section>
+        <h3>Bot Activity</h3>
+        <div className="activity-feed">
+          {activity.map((a, i) => (
+            <div key={i} className="activity-row">
+              <span className="activity-time">{new Date(a.timestamp).toLocaleTimeString()}</span>
+              <span className="activity-symbol">{a.symbol}</span>
+              <span className="activity-msg">{a.message}</span>
+            </div>
+          ))}
+          {activity.length === 0 && <div className="muted">No activity yet. Start trading to see live updates.</div>}
+        </div>
       </section>
     </div>
   )

@@ -1,0 +1,180 @@
+{
+  "accounts": {
+    "c84fff01-81db-43f6-bd02-687008322fe0": {
+      "broker_id": "fbs",
+      "login": 123456,
+      "server": "FBS-Demo",
+      "is_demo": true,
+      "display_name": "FBS",
+      "live_trading_enabled": false,
+      "aggressive_mode": false,
+      "enabled_pairs": [],
+      "settings": {}
+    },
+    "c9c707eb-c68a-44a0-8b7e-b4f5c5e2e06f": {
+      "broker_id": "fbs",
+      "login": 102790591,
+      "server": "FBS-Demo",
+      "is_demo": true,
+      "display_name": "FBS",
+      "live_trading_enabled": false,
+      "aggressive_mode": false,
+      "enabled_pairs": [],
+      "settings": {}
+    },
+    "d8087c35-a937-4ce0-bc30-5b49fc53039f": {
+      "broker_id": "fbs",
+      "login": 102790591,
+      "server": "FBS-Demo",
+      "is_demo": true,
+      "display_name": "FBS",
+      "live_trading_enabled": false,
+      "aggressive_mode": false,
+      "enabled_pairs": [],
+      "settings": {}
+    },
+    "0b985961-473c-422c-a93e-2a21dbe0a02d": {
+      "broker_id": "fbs",
+      "login": 102790591,
+      "server": "FBS-Demo",
+      "is_demo": true,
+      "display_name": "FBS",
+      "live_trading_enabled": false,
+      "aggressive_mode": false,
+      "enabled_pairs": [],
+      "settings": {}
+    },
+    "f806d8ec-84ea-4185-8657-a0f13f07a09c": {
+      "broker_id": "fbs",
+      "login": 102790591,
+      "server": "FBS-Demo",
+      "is_demo": true,
+      "display_name": "FBS",
+      "live_trading_enabled": false,
+      "aggressive_mode": false,
+      "enabled_pairs": [],
+      "settings": {}
+    },
+    "4671d63b-71b3-4580-8ca9-c6c5f25d3109": {
+      "broker_id": "fbs",
+      "login": 102790591,
+      "server": "FBS-Demo",
+      "is_demo": true,
+      "display_name": "FBS",
+      "live_trading_enabled": false,
+      "aggressive_mode": false,
+      "enabled_pairs": [],
+      "settings": {}
+    },
+    "33eeb811-f916-480a-a333-5d44babd5a37": {
+      "broker_id": "fbs",
+      "login": 102790591,
+      "server": "FBS-Demo",
+      "is_demo": true,
+      "display_name": "FBS",
+      "live_trading_enabled": false,
+      "aggressive_mode": false,
+      "enabled_pairs": [],
+      "settings": {}
+    },
+    "aa8d72e1-b9af-4d14-b713-64b24f782ff5": {
+      "broker_id": "fbs",
+      "login": 102790591,
+      "server": "FBS-Demo",
+      "is_demo": true,
+      "display_name": "FBS",
+      "live_trading_enabled": false,
+      "aggressive_mode": false,
+      "enabled_pairs": [],
+      "settings": {}
+    },
+    "886d0d45-bffe-43be-aa05-b80bd9ddeb5b": {
+      "broker_id": "fbs",
+      "login": 102790591,
+      "server": "FBS-Demo",
+      "is_demo": true,
+      "display_name": "FBS",
+      "live_trading_enabled": false,
+      "aggressive_mode": false,
+      "enabled_pairs": [],
+      "settings": {}
+    },
+    "4b9ba8fb-f6a3-47b0-b5fb-760a74688611": {
+      "broker_id": "fbs",
+      "login": 102790591,
+      "server": "FBS-Demo",
+      "is_demo": true,
+      "display_name": "FBS",
+      "live_trading_enabled": false,
+      "aggressive_mode": false,
+      "enabled_pairs": [],
+      "settings": {}
+    },
+    "f3e093d8-c5e7-47b4-9284-7838bf2c5c9b": {
+      "broker_id": "fbs",
+      "login": 102790591,
+      "server": "FBS-Demo",
+      "is_demo": true,
+      "display_name": "FBS",
+      "live_trading_enabled": false,
+      "aggressive_mode": false,
+      "enabled_pairs": [],
+      "settings": {}
+    },
+    "13cf1198-17f6-48b8-8af3-928c858d8588": {
+      "broker_id": "fbs",
+      "login": 102790591,
+      "server": "FBS-Demo",
+      "is_demo": true,
+      "display_name": "FBS",
+      "live_trading_enabled": false,
+      "aggressive_mode": false,
+      "enabled_pairs": [],
+      "settings": {}
+    },
+    "39447be5-a063-43c1-ab88-a76feb20e903": {
+      "broker_id": "fbs",
+      "login": 102790591,
+      "server": "FBS-Demo",
+      "is_demo": true,
+      "display_name": "FBS",
+      "live_trading_enabled": false,
+      "aggressive_mode": false,
+      "enabled_pairs": [],
+      "settings": {}
+    },
+    "f2ce02b0-98fe-4996-a68a-8d21bfad9ab2": {
+      "broker_id": "fbs",
+      "login": 102790591,
+      "server": "FBS-Demo",
+      "is_demo": true,
+      "display_name": "FBS",
+      "live_trading_enabled": false,
+      "aggressive_mode": false,
+      "enabled_pairs": [],
+      "settings": {}
+    },
+    "ccb10562-ca0c-4258-8590-c2abb9c61e3a": {
+      "broker_id": "fbs",
+      "login": 102790591,
+      "server": "FBS-Demo",
+      "is_demo": true,
+      "display_name": "FBS",
+      "live_trading_enabled": false,
+      "aggressive_mode": false,
+      "enabled_pairs": [],
+      "settings": {}
+    },
+    "7b17cba6-2892-4411-83c1-7325874ecd2f": {
+      "broker_id": "fbs",
+      "login": 102790591,
+      "server": "FBS-Demo",
+      "is_demo": true,
+      "display_name": "FBS",
+      "live_trading_enabled": false,
+      "aggressive_mode": false,
+      "enabled_pairs": [],
+      "settings": {}
+    }
+  }
+}

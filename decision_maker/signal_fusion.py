@@ -48,14 +48,14 @@ class SignalFusion:
         self.max_history_size = 1000
         weights = SIGNAL_FUSION_CONFIG.get("weights", {})
         self.source_weights = {
-            SignalSource.AI: weights.get("ai", 0.30),
-            SignalSource.TECHNICAL: weights.get("technical", 0.20),
-            SignalSource.PRICE_ACTION: weights.get("price_action", 0.15),
+            SignalSource.AI: weights.get("ai", 0.25),
+            SignalSource.TECHNICAL: weights.get("technical", 0.25),
+            SignalSource.PRICE_ACTION: weights.get("price_action", 0.30),
             SignalSource.MARKET_STRUCTURE: weights.get("market_structure", 0.10),
-            SignalSource.SENTIMENT: weights.get("sentiment", 0.25),
+            SignalSource.SENTIMENT: weights.get("sentiment", 0.10),
         }
         self.confidence_thresholds = SIGNAL_FUSION_CONFIG.get("min_confidence", {
-            "ai": 0.65, "technical": 0.60, "combined": 0.65,
+            "ai": 0.30, "technical": 0.30, "price_action": 0.20, "sentiment": 0.10, "combined": 0.35,
         })
         logger.success("Signal Fusion Engine initialized")
 
@@ -90,14 +90,13 @@ class SignalFusion:
                     continue
                 avg_dir = np.mean([s.direction * s.confidence for s in signals])
                 avg_conf = np.mean([s.confidence for s in signals])
-                threshold = self.confidence_thresholds.get(source.value if hasattr(source, "value") else str(source), 0.5)
-                if isinstance(source, SignalSource):
-                    threshold = self.confidence_thresholds.get(source.value, 0.5)
+                source_name = source.value if isinstance(source, SignalSource) else str(source)
+                threshold = self.confidence_thresholds.get(source_name, 0.3)
                 if avg_conf >= threshold * 0.8:
                     weight = self.source_weights[source] * avg_conf
                     weighted_votes.append(avg_dir * weight)
                     total_weight += weight
-                    contributing.append(source.value if isinstance(source, SignalSource) else str(source))
+                    contributing.append(source_name)
 
             if total_weight == 0 or len(contributing) < self.config["min_sources"]:
                 return self._get_neutral_signal(f"Insufficient sources: {len(contributing)}")
@@ -105,10 +104,10 @@ class SignalFusion:
             final_strength = sum(weighted_votes) / total_weight
             final_confidence = total_weight / sum(self.source_weights.values())
 
-            if final_confidence < self.confidence_thresholds.get("combined", 0.65):
+            if final_confidence < self.confidence_thresholds.get("combined", 0.35):
                 return self._get_neutral_signal(f"Low confidence: {final_confidence:.2f}")
 
-            action = "HOLD" if abs(final_strength) < 0.15 else ("BUY" if final_strength > 0 else "SELL")
+            action = "HOLD" if abs(final_strength) < 0.10 else ("BUY" if final_strength > 0 else "SELL")
             return FusedSignal(
                 action=action, strength=float(final_strength), confidence=float(final_confidence),
                 sources=contributing, timestamp=datetime.now().timestamp(),

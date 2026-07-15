@@ -20,29 +20,17 @@ class MarketDataFeed:
         self.last_update: Dict[str, datetime] = {}
         self.is_connected = False
         
-        # Mock data for testing (replace with real API)
-        self.mock_prices = {
-            "EURUSD": 1.1000,
-            "GBPUSD": 1.2800,
-            "USDJPY": 145.00,
-            "XAUUSD": 1950.00
-        }
-        
         logger.info("Market Data Feed initialized")
     
     async def connect(self):
         """Connect to data source"""
         try:
-            # Load historical data if exists
             await self._load_historical_data()
-            
             self.is_connected = True
             logger.success("Market Data Feed connected")
-            
         except Exception as e:
             logger.error(f"Failed to connect to data feed: {e}")
-            # Fallback to mock data
-            await self._initialize_mock_data()
+            self.is_connected = False
     
     async def _load_historical_data(self):
         """Load historical data from files"""
@@ -60,97 +48,29 @@ class MarketDataFeed:
                     except Exception as e:
                         logger.warning(f"Failed to load {file_path}: {e}")
     
-    async def _initialize_mock_data(self):
-        """Initialize with mock data for testing"""
-        logger.info("Initializing with mock data...")
-        
-        for symbol in TRADING_CONFIG["pairs"]:
-            for timeframe in TRADING_CONFIG["timeframes"]:
-                # Generate 1000 candles of mock data
-                df = self._generate_mock_data(symbol, timeframe, bars=1000)
-                self.data_cache[f"{symbol}_{timeframe}"] = df
-        
-        self.is_connected = True
-        logger.info("Mock data initialized")
-    
-    def _generate_mock_data(self, symbol: str, timeframe: str, bars: int = 1000) -> pd.DataFrame:
-        """Generate realistic mock price data"""
-        np.random.seed(hash(symbol) % 10000)
-        
-        # Base price from mock prices
-        base_price = self.mock_prices.get(symbol, 1.0)
-        
-        # Generate random walk with drift
-        n = bars
-        returns = np.random.normal(0.0001, 0.005, n)  # Small positive drift
-        prices = base_price * np.exp(np.cumsum(returns))
-        
-        # Generate OHLC data
-        # Convert timeframe to pandas frequency format
-        timeframe_map = {
-            '1min': '1T',
-            '5min': '5T',
-            '15min': '15T',
-            '1h': '1H',
-            '4h': '4H',
-            '1d': '1D'
-        }
-        pandas_freq = timeframe_map.get(timeframe, '5T')
-        dates = pd.date_range(end=datetime.now(), periods=n, freq=pandas_freq)
-        
-        df = pd.DataFrame(index=dates)
-        df['open'] = prices * (1 + np.random.normal(0, 0.0005, n))
-        df['high'] = df['open'] * (1 + np.abs(np.random.normal(0.001, 0.002, n)))
-        df['low'] = df['open'] * (1 - np.abs(np.random.normal(0.001, 0.002, n)))
-        df['close'] = prices
-        df['volume'] = np.random.randint(1000, 10000, n)
-        
-        # Ensure high > low
-        df['high'] = np.maximum(df[['high', 'open', 'close']].max(axis=1), df['low'] * 1.0001)
-        df['low'] = np.minimum(df[['low', 'open', 'close']].min(axis=1), df['high'] * 0.9999)
-        
-        return df
-    
     async def get_latest_data(self, symbol: str, timeframe: str = "5min", 
                             lookback: int = 100) -> Optional[pd.DataFrame]:
-        """Get latest market data - tries MT5 first, then cache, then mock"""
+        """Get latest market data - tries MT5 first, then cache"""
         cache_key = f"{symbol}_{timeframe}"
         
         try:
-            # Try to get from MT5 if available
-            try:
-                from core.broker.mt5_bridge import mt5_bridge
-                if mt5_bridge.connected:
-                    mt5_data = mt5_bridge.get_historical_data(symbol, timeframe, count=lookback)
-                    if mt5_data is not None and len(mt5_data) > 0:
-                        # Update cache
-                        self.data_cache[cache_key] = mt5_data
-                        return mt5_data.tail(lookback).copy() if len(mt5_data) >= lookback else mt5_data.copy()
-            except Exception as e:
-                logger.debug(f"MT5 data not available for {symbol}: {e}")
-            
-            # Try cache
-            if cache_key in self.data_cache:
-                df = self.data_cache[cache_key]
-                
-                # Return last N rows
-                if len(df) >= lookback:
-                    return df.iloc[-lookback:].copy()
-                else:
-                    return df.copy()
-            else:
-                # Generate new data if not in cache
-                logger.warning(
-                    f"[MOCK DATA] No real history for {cache_key} — generating synthetic data. "
-                    "Connect a broker and run download_all_history.py for real training data."
-                )
-                df = self._generate_mock_data(symbol, timeframe, bars=lookback)
-                self.data_cache[cache_key] = df
-                return df
-                
+            from core.broker.mt5_bridge import mt5_bridge
+            if mt5_bridge.connected:
+                mt5_data = mt5_bridge.get_historical_data(symbol, timeframe, count=lookback)
+                if mt5_data is not None and len(mt5_data) > 0:
+                    self.data_cache[cache_key] = mt5_data
+                    return mt5_data.tail(lookback).copy() if len(mt5_data) >= lookback else mt5_data.copy()
         except Exception as e:
-            logger.error(f"Error getting data for {symbol}: {e}")
-            return None
+            logger.debug(f"MT5 data not available for {symbol}: {e}")
+        
+        if cache_key in self.data_cache:
+            df = self.data_cache[cache_key]
+            if len(df) >= lookback:
+                return df.iloc[-lookback:].copy()
+            return df.copy()
+        
+        logger.warning(f"No real data available for {cache_key}. Connect a broker and run download_all_history.py.")
+        return None
     
     async def update_data(self, symbol: str, timeframe: str, 
                          new_data: pd.DataFrame):
@@ -194,15 +114,12 @@ class MarketDataFeed:
     async def get_current_price(self, symbol: str) -> Optional[float]:
         """Get current market price"""
         try:
-            # For now, return from mock prices with small random movement
-            if symbol in self.mock_prices:
-                # Add small random walk
-                change = np.random.normal(0, 0.0005)
-                self.mock_prices[symbol] *= (1 + change)
-                return self.mock_prices[symbol]
-            
+            from core.broker.mt5_bridge import mt5_bridge
+            if mt5_bridge.connected:
+                tick = mt5_bridge.get_market_price(symbol)
+                if tick:
+                    return tick.get("bid") or tick.get("ask")
             return None
-            
         except Exception as e:
             logger.error(f"Error getting current price for {symbol}: {e}")
             return None

@@ -23,7 +23,7 @@ from core.risk_management.risk_manager import risk_manager
 from core.ledger.trade_ledger import (
     init_ledger, record_open_trade, record_close_trade, resolve_orphan_trade,
 )
-from core.symbols import symbol_asset_class, price_distance_to_pips, pips_to_price_distance
+from core.symbols import symbol_asset_class, price_distance_to_pips, pips_to_price_distance, get_tick_value_from_broker
 from data.market_data import MarketDataFeed
 from data.market_analysis import market_analysis
 from utils.logger import TradingLogger
@@ -41,7 +41,7 @@ class AeroTradeBot:
         self.logger = TradingLogger("AeroTrade")
         self.running = False
         self.ai_predictor = HybridAIPredictor()
-        self.signal_fusion = SignalFusion({"weights": SIGNAL_FUSION_CONFIG["weights"]})
+        self.signal_fusion = SignalFusion(SIGNAL_FUSION_CONFIG)
         self.market_data = MarketDataFeed()
         self.broker = MT5BrokerClient(account_id)
         self.active_positions: List[Dict] = []
@@ -53,6 +53,7 @@ class AeroTradeBot:
         self.is_demo = True
         self.live_trading_enabled = False
         self._log_callbacks: List = []
+        self.activity_log: List[Dict] = []
 
     def on_log(self, callback):
         self._log_callbacks.append(callback)
@@ -63,6 +64,19 @@ class AeroTradeBot:
                 cb(level, msg)
             except Exception:
                 pass
+
+    def _log_activity(self, symbol: str, message: str):
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "symbol": symbol,
+            "message": message,
+        }
+        self.activity_log.append(entry)
+        if len(self.activity_log) > 500:
+            self.activity_log = self.activity_log[-500:]
+
+    def get_activity(self, limit: int = 50) -> List[Dict]:
+        return self.activity_log[-limit:]
 
     async def initialize(self, creds: dict = None):
         self.logger.info(f"Initializing {APP_NAME}...")
@@ -86,10 +100,11 @@ class AeroTradeBot:
 
         if self.broker.use_mt5 and self.broker.mt5_bridge:
             self.mt5_bridge = self.broker.mt5_bridge
+            await asyncio.sleep(1)
             all_symbols = self.mt5_bridge.get_all_symbols()
             prefixes = ["EUR", "GBP", "USD", "JPY", "AUD", "NZD", "CAD", "CHF", "XAU", "BTC"]
             major = [s for s in all_symbols if any(s.upper().startswith(p) for p in prefixes)]
-            self.available_symbols = (major or all_symbols)[:15]
+            self.available_symbols = (major or all_symbols)[:TRADING_CONFIG.get("max_symbols", 50)]
             # Resolve BTC symbol name per broker
             btc = next((s for s in all_symbols if "BTC" in s.upper()), None)
             if btc and btc not in self.available_symbols:
@@ -133,21 +148,36 @@ class AeroTradeBot:
             )
             if stop:
                 self.logger.warning(f"Trading stopped: {reason}")
+                self._log_activity("-", f"cycle aborted — {reason}")
                 return
 
             if len(self.active_positions) >= TRADING_CONFIG.get("max_positions", 10):
                 await self.monitor_positions()
+                self._log_activity("-", f"cycle skipped — max positions reached ({len(self.active_positions)})")
                 return
 
             self.account_info = await self.broker.get_account_info()
-            for symbol in self.available_symbols[:15]:
+            if self.broker.use_mt5 and self.broker.mt5_bridge and not self.broker.mt5_bridge.connected:
+                self.logger.warning("MT5 connection lost — attempting reconnect")
+                try:
+                    from core.broker.credential_store import load_broker_credentials
+                    creds = load_broker_credentials(self.account_id)
+                    await self.broker.connect_with_credentials(creds)
+                except Exception as e:
+                    self.logger.error(f"MT5 reconnect failed: {e}")
+            symbols_analyzed = 0
+            for symbol in self.available_symbols[:TRADING_CONFIG.get("max_symbols", 50)]:
                 try:
                     await self._process_symbol(symbol)
+                    symbols_analyzed += 1
                 except Exception as e:
                     self.logger.error(f"Error processing {symbol}: {e}")
+                    self._log_activity(symbol, f"error — {e}")
             await self.monitor_positions()
+            self._log_activity("-", f"cycle complete — {symbols_analyzed} symbols analyzed — next cycle in {1 if TRADING_CONFIG.get('scalping_enabled') else 5}s")
         except Exception as e:
             self.logger.error(f"Iteration error: {e}")
+            self._log_activity("-", f"cycle error — {e}")
 
     async def _process_symbol(self, symbol: str):
         df_1min = df_5min = None
@@ -159,6 +189,7 @@ class AeroTradeBot:
         if df_5min is None or len(df_5min) < 20:
             df_5min = await self.market_data.get_latest_data(symbol, "5min", lookback=200)
         if df_1min is None or len(df_1min) < 50:
+            self._log_activity(symbol, "analyzed — no data available — skipped")
             return
 
         # Market analysis + sentiment
@@ -177,6 +208,7 @@ class AeroTradeBot:
         sniper_logic.update_order_blocks(symbol, df_1min)
         sniper_signal = sniper_logic.get_sniper_signal(symbol, df_1min, df_5min)
         if sniper_signal["direction"] is None:
+            self._log_activity(symbol, "analyzed — no price-action signal — skipped")
             return
 
         direction_str = sniper_signal["direction"]
@@ -218,10 +250,13 @@ class AeroTradeBot:
         ))
 
         fused = await self.signal_fusion.fuse_signals(symbol)
-        if fused.action == "HOLD" or fused.confidence < AI_CONFIG.get("min_confidence", 0.55):
+        min_conf = AI_CONFIG.get("min_confidence", 0.55)
+        if fused.action == "HOLD" or fused.confidence < min_conf:
+            self._log_activity(symbol, f"analyzed — fused confidence {fused.confidence:.2f} (below {min_conf} threshold) — no trade")
             return
 
         if any(p.get("symbol") == symbol for p in self.active_positions):
+            self._log_activity(symbol, f"analyzed — fused confidence {fused.confidence:.2f} — signal: {fused.action} — already in position — skipped")
             return
 
         sentiment_agrees = (
@@ -229,6 +264,14 @@ class AeroTradeBot:
             (fused.action == "SELL" and market_bias.get("bias") != "bullish") or
             market_bias.get("bias") == "neutral"
         )
+
+        # ADX/trend-strength filter
+        try:
+            adx_ok, adx_msg = risk_manager.check_trend_filter(symbol, df_1min, adx_threshold=10.0)
+            if not adx_ok:
+                self._log_activity(symbol, f"analyzed — {adx_msg} — continuing anyway")
+        except Exception as e:
+            self.logger.warning(f"ADX check failed for {symbol}: {e}")
 
         await self.execute_trade(fused, symbol, df_1min, market_bias, sniper_signal, sentiment_agrees)
 
@@ -286,14 +329,26 @@ class AeroTradeBot:
             balance, sl_pips, decision.confidence, sentiment_agrees, symbol, symbol_info,
         )
 
+        volume_min = symbol_info.get("volume_min", 0.01)
+        volume_step = symbol_info.get("volume_step", 0.01)
+        if position_size < volume_min:
+            max_safe_risk_pct = 0.02
+            risk_at_min = volume_min * sl_pips * get_tick_value_from_broker(symbol_info or {}, default=10.0)
+            if risk_at_min > balance * max_safe_risk_pct:
+                self._log_activity(symbol, f"risk check FAILED — calculated size {position_size:.4f} lots below broker minimum {volume_min} — skipping because min size would risk ${risk_at_min:.2f} ({risk_at_min/balance*100:.1f}% of ${balance:.2f})")
+                return
+            position_size = volume_min
+
         allowed, reason = risk_manager.validate_trade(
             symbol, position_size, balance, self.active_positions,
             market_analysis_result, self.is_demo, self.live_trading_enabled,
         )
         if not allowed:
+            self._log_activity(symbol, f"risk check FAILED — {reason}")
             self.logger.debug(f"Trade blocked: {reason}")
             return
         if position_size <= 0:
+            self._log_activity(symbol, "risk check FAILED — position size <= 0 — trade skipped")
             return
 
         order_type = "BUY" if decision.action == "BUY" else "SELL"
@@ -305,6 +360,7 @@ class AeroTradeBot:
         else:
             tp_pips = RISK_CONFIG.get("scalping_tp_pips", 30)
 
+        self._log_activity(symbol, f"signal: {decision.action} — confidence {decision.confidence:.2f} — size {position_size:.2f} lots — placing order")
         self.logger.info(
             f"[{APP_NAME}] {order_type} {symbol} | Size: {position_size:.2f} | Conf: {decision.confidence:.2f}"
         )
@@ -343,8 +399,10 @@ class AeroTradeBot:
                 "confidence": decision.confidence,
                 "features_json": features_json,
             })
+            self._log_activity(symbol, f"order placed — {order_type} {position_size:.2f} lots #{order_id}")
             self.logger.success(f"Order placed: {order_type} {symbol} #{order_id}")
         else:
+            self._log_activity(symbol, f"order FAILED — {order_result.get('error')}")
             self.logger.error(f"Order failed: {order_result.get('error')}")
 
     async def monitor_positions(self):
