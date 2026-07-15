@@ -119,7 +119,7 @@ def get_closed_trades(account_id: str, limit: int = 100) -> List[Dict]:
 def get_trade_summary(account_id: str) -> Dict:
     trades = get_closed_trades(account_id, limit=10000)
     if not trades:
-        return {"total_pnl": 0, "win_rate": 0, "wins": 0, "losses": 0, "profit_factor": 0}
+        return {"total_pnl": 0, "win_rate": 0, "wins": 0, "losses": 0, "profit_factor": None}
     wins = [t for t in trades if t["outcome"] == "win"]
     losses = [t for t in trades if t["outcome"] == "loss"]
     total_profit = sum(t["pnl_usd"] for t in wins)
@@ -129,7 +129,7 @@ def get_trade_summary(account_id: str) -> Dict:
         "win_rate": len(wins) / len(trades) * 100 if trades else 0,
         "wins": len(wins),
         "losses": len(losses),
-        "profit_factor": total_profit / total_loss if total_loss > 0 else float("inf"),
+        "profit_factor": total_profit / total_loss if total_loss > 0 else None,
     }
 
 
