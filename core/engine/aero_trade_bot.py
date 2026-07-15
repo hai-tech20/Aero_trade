@@ -26,6 +26,7 @@ from core.ledger.trade_ledger import (
 from core.symbols import symbol_asset_class, price_distance_to_pips, pips_to_price_distance, get_tick_value_from_broker
 from data.market_data import MarketDataFeed
 from data.market_analysis import market_analysis
+from data.binance_data import check_btc_divergence
 from utils.logger import TradingLogger
 from config.settings import (
     APP_NAME, TRADING_CONFIG, RISK_CONFIG, AI_CONFIG, SIGNAL_FUSION_CONFIG,
@@ -313,6 +314,15 @@ class AeroTradeBot:
 
         # Stop loss distance
         current_price = market_data_df["close"].iloc[-1]
+        
+        # Binance BTCUSD divergence check
+        has_divergence = False
+        if symbol.upper() in ("BTCUSD", "BTCUSDT", "XBTUSD"):
+            divergence = check_btc_divergence(current_price)
+            self._log_activity(symbol, divergence["msg"])
+            self.logger.info(divergence["msg"])
+            has_divergence = divergence["diverges"]
+        
         if sniper_signal and sniper_signal.get("stop_loss"):
             sl_price = sniper_signal["stop_loss"]
             sl_pips = price_distance_to_pips(symbol, abs(current_price - sl_price))
@@ -328,6 +338,11 @@ class AeroTradeBot:
         position_size = risk_manager.calculate_dynamic_position_size(
             balance, sl_pips, decision.confidence, sentiment_agrees, symbol, symbol_info,
         )
+        
+        # Slightly reduce position size if there's divergence
+        if has_divergence:
+            position_size = position_size * 0.7  # 30% reduction
+            self._log_activity(symbol, f"reducing position size by 30% due to price divergence")
 
         volume_min = symbol_info.get("volume_min", 0.01)
         volume_step = symbol_info.get("volume_step", 0.01)
