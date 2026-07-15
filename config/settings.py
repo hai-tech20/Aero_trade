@@ -49,12 +49,15 @@ SIGNAL_FUSION_CONFIG: Dict[str, Any] = {
         "technical": 0.25,
         "price_action": 0.30,
         "market_structure": 0.10,
+        # Sentiment: only Alpha Vantage is used for directional signal;
+        # Finnhub only provides article count (news volume flag, not sentiment)
         "sentiment": 0.10,
     },
     "min_confidence": {
         "ai": 0.30,
         "technical": 0.30,
         "price_action": 0.20,
+        # Sentiment confidence only from Alpha Vantage
         "sentiment": 0.10,
         "combined": 0.35,
     },

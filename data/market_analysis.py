@@ -37,39 +37,42 @@ class MarketAnalysis:
         return result
 
     def get_symbol_news_sentiment(self, symbol: str) -> Dict:
-        """Finnhub general market news (since news-sentiment may require paid tier)."""
+        """
+        Finnhub: only provides news volume, not directional sentiment.
+        Returns bullish/bearish at 0.5 (neutral) with confidence=0,
+        plus article_count to use as a news volume flag (not sentiment).
+        """
         cache_key = f"finnhub:{normalize_symbol(symbol)}"
         cached = api_cache.get(cache_key)
         if cached is not None:
             return cached
 
-        if not FINNHUB_KEY:
-            return self._neutral("FINNHUB_API_KEY not set")
+        article_count = 0
+        if FINNHUB_KEY and rate_limiter.can_call("finnhub"):
+            try:
+                rate_limiter.record_call("finnhub")
+                resp = requests.get(
+                    "https://finnhub.io/api/v1/news",
+                    params={"category": "forex", "token": FINNHUB_KEY},
+                    timeout=10,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    article_count = len(data) if isinstance(data, list) else 0
+                    logger.info(f"[MARKET ANALYSIS] Finnhub retrieved {article_count} forex news articles")
+                else:
+                    logger.warning(f"Finnhub error {resp.status_code}: {resp.text[:200]}")
+            except Exception as e:
+                logger.error(f"Finnhub request failed: {e}")
 
-        if not rate_limiter.can_call("finnhub"):
-            return self._neutral("Finnhub rate limit")
-
-        try:
-            rate_limiter.record_call("finnhub")
-            resp = requests.get(
-                "https://finnhub.io/api/v1/news",
-                params={"category": "forex", "token": FINNHUB_KEY},
-                timeout=10,
-            )
-            if resp.status_code != 200:
-                logger.warning(f"Finnhub error {resp.status_code}: {resp.text[:200]}")
-                return self._neutral(f"Finnhub error {resp.status_code}")
-            data = resp.json()
-            # Use simple sentiment based on news count
-            articles = len(data) if isinstance(data, list) else 0
-            conf = min(articles / 10, 1.0)
-            result = {"bullish": 0.5, "bearish": 0.5, "confidence": conf}
-            api_cache.set(cache_key, result, FINNHUB_CACHE_TTL)
-            logger.info(f"[MARKET ANALYSIS] Finnhub retrieved {articles} forex news articles")
-            return result
-        except Exception as e:
-            logger.error(f"Finnhub request failed: {e}")
-            return self._neutral(str(e))
+        result = {
+            "bullish": 0.5,
+            "bearish": 0.5,
+            "confidence": 0.0,
+            "article_count": article_count,
+        }
+        api_cache.set(cache_key, result, FINNHUB_CACHE_TTL)
+        return result
 
     def get_alpha_vantage_sentiment(self, symbol: str) -> Dict:
         """Alpha Vantage NEWS_SENTIMENT — called infrequently."""
@@ -185,6 +188,7 @@ class MarketAnalysis:
 
     def is_news_blackout(self, symbol: str, window_minutes: int = 15) -> tuple:
         """Check if high-impact event affects symbol currencies within window."""
+        # First try to get events from FMP (if available/paid)
         events = self.get_economic_calendar()
         currencies = get_currencies_from_symbol(symbol)
         now = datetime.now()
@@ -202,7 +206,10 @@ class MarketAnalysis:
             delta = abs((ev_time - now).total_seconds()) / 60
             if delta <= window_minutes:
                 return True, f"High-impact event: {ev.get('event')} ({ev_currency}) in {delta:.0f}min"
-        return False, ""
+
+        # If no FMP events, use manual fallback
+        from config.economic_events import is_news_blackout as is_manual_news_blackout
+        return is_manual_news_blackout(symbol, window_minutes)
 
     async def get_forex_news(self, symbol: str = "EURUSD") -> List[Dict]:
         """Get recent news headlines via Finnhub company-news / general."""
@@ -237,17 +244,20 @@ class MarketAnalysis:
             return []
 
     async def get_market_sentiment(self, symbol: str) -> Dict:
-        """Combined sentiment from Alpha Vantage (primary) + Finnhub (secondary)."""
+        """
+        Sentiment from Alpha Vantage ONLY (primary/only directional source).
+        Finnhub is only used for article_count (news volume, not sentiment).
+        """
         finnhub = self.get_symbol_news_sentiment(symbol)
         av = self.get_alpha_vantage_sentiment(symbol)
 
-        # Weight Alpha Vantage higher since it's working
-        bullish = av["bullish"] * 0.7 + finnhub["bullish"] * 0.3
-        bearish = av["bearish"] * 0.7 + finnhub["bearish"] * 0.3
-        confidence = max(av["confidence"], finnhub["confidence"] * 0.5)
+        # Use only Alpha Vantage for sentiment; Finnhub article count is for volume only
+        bullish = av["bullish"]
+        bearish = av["bearish"]
+        confidence = av["confidence"]
 
         logger.info(
-            f"[MARKET ANALYSIS] Sentiment for {symbol}: bullish={bullish:.2f}, bearish={bearish:.2f}, confidence={confidence:.2f}"
+            f"[MARKET ANALYSIS] Sentiment for {symbol}: bullish={bullish:.2f}, bearish={bearish:.2f}, confidence={confidence:.2f}, articles={finnhub.get('article_count',0)}"
         )
 
         return {
@@ -256,6 +266,7 @@ class MarketAnalysis:
             "bearish": bearish,
             "neutral": max(0, 1.0 - bullish - bearish),
             "confidence": confidence,
+            "article_count": finnhub.get("article_count", 0),
             "timestamp": datetime.now().timestamp(),
         }
 
