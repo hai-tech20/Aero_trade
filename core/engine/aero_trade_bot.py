@@ -322,6 +322,12 @@ class AeroTradeBot:
             self._log_activity(symbol, divergence["msg"])
             self.logger.info(divergence["msg"])
             has_divergence = divergence["diverges"]
+
+        # News volume spike caution flag (reduce position if >50 articles)
+        has_high_news_volume = False
+        if market_analysis_result and market_analysis_result.get("sentiment", {}).get("article_count", 0) > 50:
+            has_high_news_volume = True
+            self._log_activity(symbol, f"High news volume ({market_analysis_result['sentiment']['article_count']} articles) — proceeding with caution")
         
         if sniper_signal and sniper_signal.get("stop_loss"):
             sl_price = sniper_signal["stop_loss"]
@@ -339,10 +345,13 @@ class AeroTradeBot:
             balance, sl_pips, decision.confidence, sentiment_agrees, symbol, symbol_info,
         )
         
-        # Slightly reduce position size if there's divergence
+        # Slightly reduce position size if there's divergence or high news volume
         if has_divergence:
             position_size = position_size * 0.7  # 30% reduction
             self._log_activity(symbol, f"reducing position size by 30% due to price divergence")
+        if has_high_news_volume:
+            position_size = position_size * 0.8  # 20% reduction for high news volume
+            self._log_activity(symbol, f"reducing position size by 20% due to high news volume")
 
         volume_min = symbol_info.get("volume_min", 0.01)
         volume_step = symbol_info.get("volume_step", 0.01)
