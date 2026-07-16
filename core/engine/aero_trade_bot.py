@@ -195,6 +195,8 @@ class AeroTradeBot:
             self._log_activity(symbol, "analyzed — no data available — skipped")
             return
 
+        self._log_activity(symbol, "analyzed — starting signal evaluation")
+
         # Market analysis + sentiment
         market_bias = await market_analysis.analyze_market_conditions(symbol)
         sentiment = market_bias.get("sentiment", {})
@@ -279,6 +281,7 @@ class AeroTradeBot:
         except Exception as e:
             self.logger.warning(f"ADX check failed for {symbol}: {e}")
 
+        self._log_activity(symbol, f"analyzed — fused signal {fused.action} @ {fused.confidence:.2f}")
         await self.execute_trade(fused, symbol, df_1min, market_bias, sniper_signal, sentiment_agrees)
 
     async def get_technical_signal(self, market_data_df: pd.DataFrame, market_analysis_result: Dict[str, Any] | None = None) -> Dict[str, Any]:
