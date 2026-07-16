@@ -5,6 +5,7 @@ AI Model Training Script
 import asyncio
 import numpy as np
 import pandas as pd
+from datetime import datetime
 from pathlib import Path
 import sys
 
@@ -12,28 +13,35 @@ import sys
 sys.path.append(str(Path(__file__).parent))
 
 from utils.logger import logger
-from ai_engine.models.predictor import ai_predictor
+from ai_engine.models.predictor import get_ai_predictor
 from data.market_data import market_data
 
 async def generate_training_data(symbol: str = "EURUSD",
                                timeframe: str = "5min",
                                samples: int = 5000) -> tuple:
-    """Generate training data — prefers real parquet history over mock."""
-    from config.settings import get_data_path, DATA_DIR
+    """Generate training data from verified real parquet history only."""
+    from config.settings import DATA_DIR
+
+    predictor = get_ai_predictor()
     logger.info(f"Generating training data for {symbol} {timeframe}...")
 
     history_path = DATA_DIR / f"{symbol}_{timeframe}_history.parquet"
-    if history_path.exists():
-        logger.info(f"Loading real history from {history_path}")
-        df = pd.read_parquet(history_path)
-    else:
-        df = await market_data.get_latest_data(symbol, timeframe, lookback=samples * 2)
-        if df is not None and len(df) > 100:
-            logger.warning("[MOCK DATA] Training on synthetic data — run download_all_history.py first")
-    
+    if not history_path.exists():
+        logger.error(f"Verified real history not found: {history_path}")
+        return None, None, None, None, None
+
+    df = pd.read_parquet(history_path)
     if df is None or len(df) < 100:
-        logger.error("Insufficient data for training")
-        return None, None, None, None
+        logger.error(f"Insufficient verified real data in {history_path}")
+        return None, None, None, None, None
+
+    if "time" in df.columns:
+        time_series = pd.to_datetime(df["time"])
+    else:
+        time_series = pd.to_datetime(df.index)
+    logger.info(
+        f"Verified real training data: rows={len(df)} | range={time_series.min()} -> {time_series.max()} | path={history_path}"
+    )
     
     # Prepare features and labels
     X = []
@@ -47,7 +55,7 @@ async def generate_training_data(symbol: str = "EURUSD",
         window = df.iloc[i-lookback:i]
         
         # Prepare features
-        features = await ai_predictor.prepare_features(window)
+        features = await predictor.prepare_features(window)
         
         if features.size > 0:
             # Calculate label: 1 if price goes up, 0 if down
@@ -71,8 +79,21 @@ async def generate_training_data(symbol: str = "EURUSD",
     y_test = y[split_idx:]
     
     logger.success(f"Generated {len(X_train)} training and {len(X_test)} test samples")
-    
-    return X_train, y_train, X_test, y_test
+
+    dataset_info = {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "history_path": str(history_path),
+        "history_rows": int(len(df)),
+        "date_range": {
+            "start": str(time_series.min()),
+            "end": str(time_series.max()),
+        },
+        "training_samples": int(len(X)),
+        "source": "verified_real_history",
+    }
+
+    return X_train, y_train, X_test, y_test, dataset_info
 
 async def train_all_models():
     """Train all AI models"""
@@ -81,34 +102,52 @@ async def train_all_models():
     logger.info("=" * 60)
     
     try:
-        # Connect to market data
+        predictor = get_ai_predictor()
         await market_data.connect()
-        
-        # Generate training data
-        X_train, y_train, X_test, y_test = await generate_training_data()
-        
+
+        X_train, y_train, X_test, y_test, dataset_info = await generate_training_data()
+
         if X_train is None:
             logger.error("Failed to generate training data")
             return False
         
         # Train Random Forest model
+        version = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_metadata = {
+            "trained_at": datetime.now().isoformat(),
+            "training_source": "verified_real_history",
+            "verified_real_history": True,
+            "history_path": dataset_info["history_path"],
+            "history_rows": dataset_info["history_rows"],
+            "history_date_range": dataset_info["date_range"],
+            "training_samples": dataset_info["training_samples"],
+        }
+
         logger.info("Training Random Forest model...")
-        await ai_predictor.train(X_train, y_train, model_name='rf_5min', save=True)
-        
-        # Train Gradient Boosting model
+        await predictor.train(
+            X_train, y_train, model_name='rf_5min', save=True,
+            metadata={**base_metadata, "model_name": "rf_5min", "version": version},
+            version_suffix=version, promote=True,
+        )
+
         logger.info("Training Gradient Boosting model...")
-        await ai_predictor.train(X_train, y_train, model_name='gbm_15min', save=True)
-        
-        # Train 1-minute model if enough data
+        await predictor.train(
+            X_train, y_train, model_name='gbm_15min', save=True,
+            metadata={**base_metadata, "model_name": "gbm_15min", "version": version},
+            version_suffix=version, promote=True,
+        )
+
         if len(X_train) > 1000:
             logger.info("Training 1-minute model...")
-            await ai_predictor.train(X_train, y_train, model_name='rf_1min', save=True)
-        
-        # Evaluate models
+            await predictor.train(
+                X_train, y_train, model_name='rf_1min', save=True,
+                metadata={**base_metadata, "model_name": "rf_1min", "version": version},
+                version_suffix=version, promote=True,
+            )
+
         await evaluate_models(X_test, y_test)
-        
-        # Get model performance
-        performance = await ai_predictor.get_model_performance()
+
+        performance = await predictor.get_model_performance()
         
         logger.success("=" * 60)
         logger.success("✅ AI MODELS TRAINED SUCCESSFULLY")
@@ -131,6 +170,7 @@ async def train_all_models():
         await market_data.disconnect()
 
 async def evaluate_models(X_test: np.ndarray, y_test: np.ndarray):
+    predictor = get_ai_predictor()
     """Evaluate model performance"""
     if X_test is None or len(X_test) == 0:
         return
@@ -138,9 +178,9 @@ async def evaluate_models(X_test: np.ndarray, y_test: np.ndarray):
     logger.info("Evaluating models...")
     
     for model_name in ['rf_5min', 'gbm_15min', 'rf_1min']:
-        if model_name in ai_predictor.models and hasattr(ai_predictor.models[model_name], 'predict'):
+        if model_name in predictor.models and hasattr(predictor.models[model_name], 'predict'):
             try:
-                model = ai_predictor.models[model_name]
+                model = predictor.models[model_name]
                 
                 if hasattr(model, 'classes_'):
                     # Make predictions

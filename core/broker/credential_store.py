@@ -4,7 +4,7 @@ import json
 import os
 import uuid
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from utils.logger import logger
 
@@ -15,22 +15,25 @@ try:
     import keyring
     HAS_KEYRING = True
 except ImportError:
+    keyring = None
     HAS_KEYRING = False
 
 try:
     from cryptography.fernet import Fernet
     HAS_CRYPTO = True
 except ImportError:
+    Fernet = None
     HAS_CRYPTO = False
 
 
-def _get_fernet() -> Optional["Fernet"]:
-    if not HAS_CRYPTO:
+def _get_fernet() -> Optional[Any]:
+    if not HAS_CRYPTO or Fernet is None:
         return None
     key = os.getenv("AERO_TRADE_ENCRYPTION_KEY", "")
     if not key:
         return None
-    return Fernet(key.encode() if isinstance(key, str) else key)
+    fernet_cls = cast(Any, Fernet)
+    return fernet_cls(key.encode() if isinstance(key, str) else key)
 
 
 def _encrypt(payload: str) -> str:
@@ -47,13 +50,13 @@ def _decrypt(payload: str) -> str:
     return payload
 
 
-def _load_accounts_meta() -> Dict:
+def _load_accounts_meta() -> Dict[str, Any]:
     if ACCOUNTS_FILE.exists():
         return json.loads(ACCOUNTS_FILE.read_text(encoding="utf-8"))
     return {"accounts": {}}
 
 
-def _save_accounts_meta(data: Dict):
+def _save_accounts_meta(data: Dict[str, Any]):
     ACCOUNTS_FILE.parent.mkdir(parents=True, exist_ok=True)
     ACCOUNTS_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
@@ -65,7 +68,7 @@ def save_broker_credentials(
     server: str,
     demo: bool,
     broker_id: str = "custom",
-    mt5_path: str = None,
+    mt5_path: Optional[str] = None,
 ) -> None:
     payload = json.dumps({
         "login": login,
@@ -75,7 +78,7 @@ def save_broker_credentials(
         "broker_id": broker_id,
         "mt5_path": mt5_path,
     })
-    if HAS_KEYRING:
+    if HAS_KEYRING and keyring is not None:
         keyring.set_password(SERVICE_NAME, account_id, payload)
     else:
         meta = _load_accounts_meta()
@@ -84,7 +87,7 @@ def save_broker_credentials(
 
 
 def load_broker_credentials(account_id: str) -> dict:
-    if HAS_KEYRING:
+    if HAS_KEYRING and keyring is not None:
         raw = keyring.get_password(SERVICE_NAME, account_id)
         if raw is None:
             raise KeyError(f"No stored credentials for {account_id}")
@@ -103,7 +106,7 @@ def create_account(
     server: str,
     is_demo: bool,
     display_name: str = "",
-    mt5_path: str = None,
+    mt5_path: Optional[str] = None,
 ) -> str:
     account_id = str(uuid.uuid4())
     save_broker_credentials(account_id, login, password, server, is_demo, broker_id, mt5_path)
@@ -152,7 +155,7 @@ def delete_account(account_id: str):
     meta = _load_accounts_meta()
     meta.get("accounts", {}).pop(account_id, None)
     _save_accounts_meta(meta)
-    if HAS_KEYRING:
+    if HAS_KEYRING and keyring is not None:
         try:
             keyring.delete_password(SERVICE_NAME, account_id)
         except Exception:

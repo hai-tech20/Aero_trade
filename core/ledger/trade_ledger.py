@@ -1,10 +1,11 @@
 """Persistent trade ledger — every trade resolves to win/loss/breakeven."""
 
-import json
 import sqlite3
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional
+
+from config.settings import AI_CONFIG
 
 DB_PATH = Path("data/aero_trade_ledger.db")
 
@@ -85,16 +86,21 @@ def record_close_trade(order_id: str, exit_price: float, pnl_usd: float, confide
            WHERE order_id = ?""",
         (exit_price, datetime.now().isoformat(), pnl_usd, outcome, order_id),
     )
-    # Log mistakes: confident but wrong
-    if outcome == "loss" and confidence_at_entry > 0.65:
+
+    threshold = float(AI_CONFIG.get("min_confidence", 0.30))
+    if outcome == "loss" and float(confidence_at_entry) >= threshold:
         row = conn.execute(
-            "SELECT symbol, features_json FROM trades WHERE order_id = ?", (order_id,)
+            "SELECT symbol, features_json, confidence FROM trades WHERE order_id = ?", (order_id,)
         ).fetchone()
         if row:
-            conn.execute(
-                "INSERT INTO mistakes (order_id, symbol, confidence, features_json, recorded_at) VALUES (?,?,?,?,?)",
-                (order_id, row[0], confidence_at_entry, row[1], datetime.now().isoformat()),
-            )
+            existing = conn.execute(
+                "SELECT 1 FROM mistakes WHERE order_id = ?", (order_id,)
+            ).fetchone()
+            if not existing:
+                conn.execute(
+                    "INSERT INTO mistakes (order_id, symbol, confidence, features_json, recorded_at) VALUES (?,?,?,?,?)",
+                    (order_id, row[0], row[2], row[1], datetime.now().isoformat()),
+                )
     conn.commit()
     conn.close()
     return outcome
@@ -131,6 +137,51 @@ def get_trade_summary(account_id: str) -> Dict:
         "losses": len(losses),
         "profit_factor": total_profit / total_loss if total_loss > 0 else None,
     }
+
+
+def get_recent_closed_trades_for_training(limit: int = 500) -> List[Dict]:
+    init_ledger()
+    conn = _conn()
+    rows = conn.execute(
+        """SELECT order_id, symbol, outcome, confidence, features_json, close_time
+           FROM trades
+           WHERE close_time IS NOT NULL AND outcome IN ('win', 'loss')
+             AND features_json IS NOT NULL AND features_json != ''
+           ORDER BY close_time DESC
+           LIMIT ?""",
+        (limit,),
+    ).fetchall()
+    conn.close()
+    cols = ["order_id", "symbol", "outcome", "confidence", "features_json", "close_time"]
+    return [dict(zip(cols, r)) for r in rows]
+
+
+def get_mistake_rows(limit: int = 200) -> List[Dict]:
+    init_ledger()
+    conn = _conn()
+    rows = conn.execute(
+        "SELECT id, order_id, symbol, confidence, features_json, recorded_at FROM mistakes ORDER BY recorded_at DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    conn.close()
+    cols = ["id", "order_id", "symbol", "confidence", "features_json", "recorded_at"]
+    return [dict(zip(cols, r)) for r in rows]
+
+
+def count_closed_trades_since(since_iso: Optional[str]) -> int:
+    init_ledger()
+    conn = _conn()
+    if since_iso:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM trades WHERE close_time IS NOT NULL AND close_time > ?",
+            (since_iso,),
+        ).fetchone()[0]
+    else:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM trades WHERE close_time IS NOT NULL"
+        ).fetchone()[0]
+    conn.close()
+    return int(count)
 
 
 def resolve_orphan_trade(order_id: str, account_id: str, symbol: str, direction: str,

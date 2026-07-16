@@ -1,0 +1,25 @@
+{
+  "model_name": "gbm_15min",
+  "version": "20260716_230717",
+  "symbol": "EURUSD",
+  "timeframe": "15min",
+  "trained_at": "2026-07-16T23:07:17.980647",
+  "training_reason": "gold_btc_final_pass",
+  "training_source": "verified_real_history",
+  "verified_real_history": true,
+  "history_path": "C:\\Users\\pc\\Desktop\\company projects\\fbs-ai-trader\\data\\EURUSD_15min_history.parquet",
+  "history_rows": 100000,
+  "history_date_range": {
+    "start": "2022-07-05 08:30:00",
+    "end": "2026-07-16 19:00:00"
+  },
+  "historical_samples": 99933,
+  "trade_outcome_rows_since_last_run": 14,
+  "validation": {
+    "current_model_accuracy": 0.50527631907977,
+    "candidate_model_accuracy": 0.5016254063515879,
+    "mistake_accuracy_before": null,
+    "mistake_accuracy_after": null,
+    "promoted": false
+  }
+}

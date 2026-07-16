@@ -2,25 +2,28 @@
 Hybrid AI Predictor - Combines ML models for forex predictions
 """
 
-import numpy as np
-import pandas as pd
-import asyncio
-from typing import Dict, List, Optional, Tuple
+import json
+import warnings
 from dataclasses import dataclass
 from datetime import datetime
-import joblib
-from pathlib import Path
-import warnings
-warnings.filterwarnings('ignore')
+from typing import Any, Dict, List, Optional, Tuple
 
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+import joblib
+import numpy as np
+import pandas as pd
+from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import SGDClassifier
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import accuracy_score
 
-from utils.logger import TradingLogger
+from ai_engine.models.model_keys import base_model_key_for_timeframe, make_model_key, make_scaler_key
+from ai_engine.training.retraining_service import RetrainingService
 from config.settings import MODEL_DIR
+from utils.logger import TradingLogger
+
+warnings.filterwarnings('ignore')
 logger = TradingLogger("AI-Predictor")
+
+
 @dataclass
 class Prediction:
     """AI prediction result"""
@@ -44,7 +47,9 @@ class HybridAIPredictor:
         self.scalers: Dict = {}
         self.feature_names: List[str] = []
         self.is_trained: bool = False
-        self._pending_retrain_buffer: List = []
+        self._pending_retrain_buffer: List[Dict[str, Any]] = []
+        self.training_metadata: Dict[str, Dict[str, Any]] = {}
+        self.retraining_service: Optional[RetrainingService] = None
         
         # Initialize models
         self._initialize_models()
@@ -52,12 +57,14 @@ class HybridAIPredictor:
         # Load pre-trained models if available
         if autoload_models:
             self._load_saved_models()
+
+        self.retraining_service = RetrainingService(self)
     
     def _initialize_models(self):
         """Initialize ML models with optimized parameters"""
         logger.info("Initializing AI models...")
         
-        # Fast Random Forest (5-minute predictions)
+        # Base prototypes used to materialize per-symbol models on demand
         self.models['rf_5min'] = RandomForestClassifier(
             n_estimators=100,
             max_depth=10,
@@ -91,7 +98,7 @@ class HybridAIPredictor:
             n_jobs=1
         )
         
-        # Initialize scalers for each timeframe
+        # Initialize default scalers for each timeframe; per-symbol scalers are loaded/trained on demand
         for timeframe in ['1min', '5min', '15min']:
             self.scalers[timeframe] = StandardScaler()
         
@@ -109,12 +116,21 @@ class HybridAIPredictor:
 
                         # Keep scalers out of the models dict
                         if stem.startswith("scaler_"):
-                            timeframe = stem.replace("scaler_", "", 1)
-                            self.scalers[timeframe] = loaded
-                            logger.success(f"Loaded scaler: {timeframe}")
+                            scaler_key = stem
+                            self.scalers[scaler_key] = loaded
+                            parts = stem.split('_')
+                            if len(parts) == 2:
+                                self.scalers[parts[-1]] = loaded
+                            logger.success(f"Loaded scaler: {scaler_key}")
                             continue
 
                         self.models[stem] = loaded
+                        metadata_path = model_file.with_suffix('.metadata.json')
+                        if metadata_path.exists():
+                            try:
+                                self.training_metadata[stem] = json.loads(metadata_path.read_text(encoding='utf-8'))
+                            except Exception as e:
+                                logger.warning(f"Could not load metadata for {stem}: {e}")
                         # Avoid joblib parallel backends causing permission issues on some Windows setups
                         try:
                             if hasattr(loaded, "set_params") and hasattr(loaded, "n_jobs"):
@@ -213,7 +229,8 @@ class HybridAIPredictor:
     
     async def predict(self, df: pd.DataFrame, 
                      timeframe: str = '5min',
-                     model_type: str = 'auto') -> Prediction:
+                     model_type: str = 'auto',
+                     symbol: str = 'EURUSD') -> Prediction:
         """
         Make AI prediction on market data
         """
@@ -238,13 +255,13 @@ class HybridAIPredictor:
             # Select model
             if model_type == 'auto':
                 # Try to find model for this timeframe
-                model_key = f'rf_{timeframe}' if f'rf_{timeframe}' in self.models else None
+                preferred_family = 'gbm' if timeframe == '15min' else 'rf'
+                symbol_key = make_model_key(symbol, timeframe, preferred_family)
+                timeframe_key = base_model_key_for_timeframe(timeframe)
+                model_key = symbol_key if symbol_key in self.models else (timeframe_key if timeframe_key in self.models else None)
                 if model_key is None:
-                    # Try gbm for 15min
-                    if timeframe == '15min' and 'gbm_15min' in self.models:
-                        model_key = 'gbm_15min'
                     # Fallback to any available model
-                    elif len(self.models) > 0:
+                    if len(self.models) > 0:
                         model_key = list(self.models.keys())[0]
                     else:
                         logger.warning("No models available")
@@ -284,9 +301,11 @@ class HybridAIPredictor:
 
             # Scale features (only if scaler shape matches)
             features_scaled = X
-            if timeframe in self.scalers:
+            scaler_key = make_scaler_key(symbol, timeframe)
+            fallback_scaler_key = timeframe
+            if scaler_key in self.scalers or fallback_scaler_key in self.scalers:
                 try:
-                    scaler = self.scalers[timeframe]
+                    scaler = self.scalers.get(scaler_key, self.scalers[fallback_scaler_key])
                     if not hasattr(scaler, 'mean_'):
                         scaler.fit(X)
                     elif hasattr(scaler, "n_features_in_") and int(scaler.n_features_in_) != int(X.shape[1]):
@@ -349,7 +368,12 @@ class HybridAIPredictor:
         )
     
     async def train(self, X_train: np.ndarray, y_train: np.ndarray,
-                   model_name: str = 'rf_5min', save: bool = True):
+                   model_name: str = 'rf_5min', save: bool = True,
+                   metadata: Optional[Dict[str, Any]] = None,
+                   version_suffix: Optional[str] = None,
+                   promote: bool = True,
+                   active_name: Optional[str] = None,
+                   scaler_name: Optional[str] = None):
         """
         Train a model
         """
@@ -358,47 +382,82 @@ class HybridAIPredictor:
                 logger.info(f"Training {model_name}...")
                 self.models[model_name].fit(X_train, y_train)
                 self.is_trained = True
-                
+
                 if save:
-                    # Save model
                     MODEL_DIR.mkdir(parents=True, exist_ok=True)
-                    model_path = MODEL_DIR / f"{model_name}.joblib"
+                    parts = model_name.split('_')
+                    timeframe = parts[-1]
+                    suffix = f"_v{version_suffix}" if version_suffix else ""
+                    model_path = MODEL_DIR / f"{model_name}{suffix}.joblib"
+                    resolved_scaler_name = scaler_name or f"scaler_{timeframe}"
+                    scaler_path = MODEL_DIR / f"{resolved_scaler_name}{suffix}.joblib"
+                    active_scaler = self.scalers.get(resolved_scaler_name, self.scalers.get(timeframe))
+                    if active_scaler is None:
+                        active_scaler = StandardScaler()
+                        self.scalers[resolved_scaler_name] = active_scaler
+                        self.scalers[timeframe] = active_scaler
                     joblib.dump(self.models[model_name], model_path)
+                    joblib.dump(active_scaler, scaler_path)
                     logger.success(f"Model saved: {model_path}")
-                    
-                    # Also save scaler
-                    scaler_path = MODEL_DIR / f"scaler_{model_name.split('_')[1]}.joblib"
-                    joblib.dump(self.scalers[model_name.split('_')[1]], scaler_path)
+                    if metadata is not None:
+                        metadata_path = MODEL_DIR / f"{model_name}{suffix}.metadata.json"
+                        metadata_path.write_text(json.dumps(metadata, indent=2), encoding='utf-8')
+                        self.training_metadata[model_name] = metadata
+                    if promote and suffix:
+                        active_model_key = active_name or model_name
+                        active_model_path = MODEL_DIR / f"{active_model_key}.joblib"
+                        active_scaler_path = MODEL_DIR / f"{resolved_scaler_name}.joblib"
+                        joblib.dump(self.models[model_name], active_model_path)
+                        joblib.dump(active_scaler, active_scaler_path)
+                        if metadata is not None:
+                            active_metadata_path = MODEL_DIR / f"{active_model_key}.metadata.json"
+                            active_metadata_path.write_text(json.dumps(metadata, indent=2), encoding='utf-8')
             
         except Exception as e:
             logger.error(f"Training error: {e}")
     
     async def update_with_new_data(self, df: pd.DataFrame,
                                  actual_direction: int,
-                                 timeframe: str = '5min'):
+                                 timeframe: str = '5min',
+                                 trade_sample: Optional[Dict[str, Any]] = None):
         """Online learning from real trade outcomes."""
         try:
             features = await self.prepare_features(df)
             if features.size == 0:
                 return
 
-            if timeframe in self.scalers:
-                self.scalers[timeframe].partial_fit(features)
+            symbol = str((trade_sample or {}).get("symbol") or "EURUSD")
+            scaler_key = make_scaler_key(symbol, timeframe)
+            scaler = self.scalers.get(scaler_key, self.scalers.get(timeframe))
+            if scaler is None:
+                scaler = StandardScaler()
+                self.scalers[scaler_key] = scaler
+                self.scalers[timeframe] = scaler
+            scaler.partial_fit(features)
 
-            model_key = f"rf_{timeframe}"
+            model_key = make_model_key(symbol, timeframe, 'rf' if timeframe != '15min' else 'gbm')
             sgd = self.models.get("sgd_online")
 
             if sgd is not None and hasattr(sgd, "partial_fit"):
-                X = self.scalers.get(timeframe, self.scalers.get("5min"))
-                if X:
-                    X_scaled = X.transform(features)
+                active_scaler = self.scalers.get(scaler_key, self.scalers.get(timeframe, self.scalers.get("5min")))
+                if active_scaler is not None:
+                    X_scaled = active_scaler.transform(features)
                     try:
                         sgd.partial_fit(X_scaled, [actual_direction], classes=self._sgd_classes)
                     except ValueError:
                         sgd.partial_fit(X_scaled, [actual_direction])
                     logger.info(f"Online-updated sgd_online with outcome={actual_direction}")
+            sample = trade_sample or {
+                "features": features.flatten().tolist(),
+                "label": int(actual_direction),
+                "timeframe": timeframe,
+                "recorded_at": datetime.now().isoformat(),
+            }
+
+            if self.retraining_service is not None:
+                self.retraining_service.notify_new_trade_sample(sample)
             elif model_key in self.models:
-                self._pending_retrain_buffer.append((features, actual_direction))
+                self._pending_retrain_buffer.append(sample)
                 if len(self._pending_retrain_buffer) >= 50:
                     logger.info(f"Retrain buffer full ({len(self._pending_retrain_buffer)} samples) — schedule batch retrain")
         except Exception as e:
@@ -422,6 +481,28 @@ class HybridAIPredictor:
                 }
         
         return performance
+
+    async def start_retraining_scheduler(self):
+        if self.retraining_service is not None:
+            await self.retraining_service.start()
+
+    async def stop_retraining_scheduler(self):
+        if self.retraining_service is not None:
+            await self.retraining_service.stop()
+
+    async def run_retraining_now(
+        self,
+        reason: str = 'manual',
+        targets: Optional[List[Tuple[str, str]]] = None,
+    ) -> Dict[str, Any]:
+        if self.retraining_service is None:
+            return {"status": "unavailable"}
+        return await self.retraining_service.run_retraining(reason=reason, targets=targets)
+
+    def get_retraining_status(self) -> Dict[str, Any]:
+        if self.retraining_service is None:
+            return {"running": False}
+        return self.retraining_service.get_status()
 
 # Global instance
 ai_predictor: Optional[HybridAIPredictor] = None

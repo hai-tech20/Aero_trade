@@ -1,0 +1,25 @@
+{
+  "model_name": "rf_GBPUSD_5min",
+  "version": "20260717_002433",
+  "symbol": "GBPUSD",
+  "timeframe": "5min",
+  "trained_at": "2026-07-17T00:24:33.715064",
+  "training_reason": "full_history_download",
+  "training_source": "verified_real_history",
+  "verified_real_history": true,
+  "history_path": "C:\\Users\\pc\\Desktop\\company projects\\fbs-ai-trader\\data\\GBPUSD_5min_history.parquet",
+  "history_rows": 99301,
+  "history_date_range": {
+    "start": "2025-03-13 04:50:00",
+    "end": "2026-07-16 19:10:00"
+  },
+  "historical_samples": 99234,
+  "trade_outcome_rows_since_last_run": 14,
+  "validation": {
+    "current_model_accuracy": 0.5130439161966156,
+    "candidate_model_accuracy": 0.5048851732473811,
+    "mistake_accuracy_before": null,
+    "mistake_accuracy_after": null,
+    "promoted": false
+  }
+}

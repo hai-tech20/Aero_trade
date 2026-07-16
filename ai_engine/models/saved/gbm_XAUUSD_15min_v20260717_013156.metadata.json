@@ -1,0 +1,25 @@
+{
+  "model_name": "gbm_XAUUSD_15min",
+  "version": "20260717_013156",
+  "symbol": "XAUUSD",
+  "timeframe": "15min",
+  "trained_at": "2026-07-17T01:31:56.734397",
+  "training_reason": "final_targeted_batch",
+  "training_source": "verified_real_history",
+  "verified_real_history": true,
+  "history_path": "C:\\Users\\pc\\Desktop\\company projects\\fbs-ai-trader\\data\\XAUUSD_15min_history.parquet",
+  "history_rows": 99717,
+  "history_date_range": {
+    "start": "2022-04-14 01:00:00",
+    "end": "2026-07-16 19:30:00"
+  },
+  "historical_samples": 99650,
+  "trade_outcome_rows_since_last_run": 14,
+  "validation": {
+    "current_model_accuracy": 0.4894929535082,
+    "candidate_model_accuracy": 0.5090526104619089,
+    "mistake_accuracy_before": null,
+    "mistake_accuracy_after": null,
+    "promoted": true
+  }
+}

@@ -4,11 +4,11 @@ AERO TRADE — Main Trading Engine
 
 import asyncio
 import json
-import signal
+
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List
 
 import pandas as pd
 
@@ -17,13 +17,13 @@ sys.path.append(str(Path(__file__).parent))
 from ai_engine.models.predictor import HybridAIPredictor
 from decision_maker.signal_fusion import SignalFusion, Signal, SignalSource, FusedSignal
 from core.broker.mt5_broker_client import MT5BrokerClient
-from core.broker.credential_store import load_broker_credentials, get_account_meta
+from core.broker.credential_store import get_account_meta
 from core.strategies.sniper_logic import sniper_logic
 from core.risk_management.risk_manager import risk_manager
 from core.ledger.trade_ledger import (
     init_ledger, record_open_trade, record_close_trade, resolve_orphan_trade,
 )
-from core.symbols import symbol_asset_class, price_distance_to_pips, pips_to_price_distance, get_tick_value_from_broker
+from core.symbols import symbol_asset_class, price_distance_to_pips, get_tick_value_from_broker
 from data.market_data import MarketDataFeed
 from data.market_analysis import market_analysis
 from data.binance_data import check_btc_divergence
@@ -36,7 +36,7 @@ from config.settings import (
 class AeroTradeBot:
     """AERO TRADE trading bot orchestrator."""
 
-    def __init__(self, account_id: str = "default", config: dict = None):
+    def __init__(self, account_id: str = "default", config: Dict[str, Any] | None = None):
         self.account_id = account_id
         self.config = config or {}
         self.logger = TradingLogger("AeroTrade")
@@ -79,10 +79,11 @@ class AeroTradeBot:
     def get_activity(self, limit: int = 50) -> List[Dict]:
         return self.activity_log[-limit:]
 
-    async def initialize(self, creds: dict = None):
+    async def initialize(self, creds: Dict[str, Any] | None = None):
         self.logger.info(f"Initializing {APP_NAME}...")
         init_ledger()
         await self._initialize_ai()
+        await self.ai_predictor.start_retraining_scheduler()
 
         if creds:
             await self.broker.connect_with_credentials(creds)
@@ -181,7 +182,8 @@ class AeroTradeBot:
             self._log_activity("-", f"cycle error — {e}")
 
     async def _process_symbol(self, symbol: str):
-        df_1min = df_5min = None
+        df_1min: pd.DataFrame | None = None
+        df_5min: pd.DataFrame | None = None
         if self.mt5_bridge:
             df_1min = self.mt5_bridge.get_historical_data(symbol, "1min", count=200)
             df_5min = self.mt5_bridge.get_historical_data(symbol, "5min", count=200)
@@ -207,6 +209,9 @@ class AeroTradeBot:
 
         # Sniper signal
         sniper_logic.update_order_blocks(symbol, df_1min)
+        if df_5min is None:
+            self._log_activity(symbol, "analyzed — missing 5min context — skipped")
+            return
         sniper_signal = sniper_logic.get_sniper_signal(symbol, df_1min, df_5min)
         if sniper_signal["direction"] is None:
             self._log_activity(symbol, "analyzed — no price-action signal — skipped")
@@ -226,7 +231,7 @@ class AeroTradeBot:
 
         # AI signal
         try:
-            ai_pred = await self.ai_predictor.predict(df_1min, timeframe="1min")
+            ai_pred = await self.ai_predictor.predict(df_1min, timeframe="1min", symbol=symbol)
             if ai_pred:
                 await self.signal_fusion.add_signal(Signal(
                     source=SignalSource.AI,
@@ -276,11 +281,11 @@ class AeroTradeBot:
 
         await self.execute_trade(fused, symbol, df_1min, market_bias, sniper_signal, sentiment_agrees)
 
-    async def get_technical_signal(self, market_data_df: pd.DataFrame, market_analysis_result=None) -> Dict:
+    async def get_technical_signal(self, market_data_df: pd.DataFrame, market_analysis_result: Dict[str, Any] | None = None) -> Dict[str, Any]:
         import numpy as np
         if len(market_data_df) < 20:
             return {"direction": 0, "confidence": 0.0, "indicators": {}}
-        close = market_data_df["close"].values
+        close = market_data_df["close"].to_numpy(dtype=float)
         ma_fast = np.mean(close[-5:])
         ma_slow = np.mean(close[-20:])
         ma_signal = 1 if ma_fast > ma_slow else -1
@@ -301,8 +306,8 @@ class AeroTradeBot:
         decision: FusedSignal,
         symbol: str,
         market_data_df: pd.DataFrame,
-        market_analysis_result=None,
-        sniper_signal: dict = None,
+        market_analysis_result: Dict[str, Any] | None = None,
+        sniper_signal: Dict[str, Any] | None = None,
         sentiment_agrees: bool = True,
     ):
         min_conf = AI_CONFIG.get("min_confidence", 0.55)
@@ -348,13 +353,13 @@ class AeroTradeBot:
         # Slightly reduce position size if there's divergence or high news volume
         if has_divergence:
             position_size = position_size * 0.7  # 30% reduction
-            self._log_activity(symbol, f"reducing position size by 30% due to price divergence")
+            self._log_activity(symbol, "reducing position size by 30% due to price divergence")
         if has_high_news_volume:
             position_size = position_size * 0.8  # 20% reduction for high news volume
-            self._log_activity(symbol, f"reducing position size by 20% due to high news volume")
+            self._log_activity(symbol, "reducing position size by 20% due to high news volume")
 
         volume_min = symbol_info.get("volume_min", 0.01)
-        volume_step = symbol_info.get("volume_step", 0.01)
+
         if position_size < volume_min:
             max_safe_risk_pct = 0.02
             risk_at_min = volume_min * sl_pips * get_tick_value_from_broker(symbol_info or {}, default=10.0)
@@ -365,7 +370,7 @@ class AeroTradeBot:
 
         allowed, reason = risk_manager.validate_trade(
             symbol, position_size, balance, self.active_positions,
-            market_analysis_result, self.is_demo, self.live_trading_enabled,
+            market_analysis_result or {}, self.is_demo, self.live_trading_enabled,
         )
         if not allowed:
             self._log_activity(symbol, f"risk check FAILED — {reason}")
@@ -465,7 +470,19 @@ class AeroTradeBot:
                     sym = position.get("symbol", "EURUSD")
                     df = await self.market_data.get_latest_data(sym, "5min", lookback=50)
                     if df is not None:
-                        await self.ai_predictor.update_with_new_data(df, actual_dir, "5min")
+                        await self.ai_predictor.update_with_new_data(
+                            df,
+                            actual_dir,
+                            "5min",
+                            trade_sample={
+                                "order_id": order_id,
+                                "symbol": sym,
+                                "features": json.loads(position.get("features_json", "[]") or "[]") if position.get("features_json") else [],
+                                "label": int(actual_dir),
+                                "timeframe": "5min",
+                                "recorded_at": datetime.now().isoformat(),
+                            },
+                        )
                 except Exception:
                     pass
 
@@ -482,6 +499,7 @@ class AeroTradeBot:
         self.logger.info("Shutting down...")
         for pos in self.active_positions:
             await self.close_position(pos)
+        await self.ai_predictor.stop_retraining_scheduler()
         await self.broker.disconnect()
         self.running = False
         self.logger.info(f"{APP_NAME} shutdown complete")

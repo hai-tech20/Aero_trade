@@ -1,11 +1,11 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 
 const API = ''
 
-function Logo({ size = 48 }) {
+function Logo({ size = 48, src = '/aero_trade_logo.png' }) {
   return (
-    <img src="/aero_trade_logo.png" alt="AERO TRADE"
-      style={{ height: size, objectFit: 'contain' }} />
+    <img src={src} alt="AERO TRADE"
+      style={{ height: size, width: size, objectFit: 'contain', borderRadius: 10 }} />
   )
 }
 
@@ -21,9 +21,23 @@ function Splash() {
 
 function BrokerSelect({ onSelect }) {
   const [brokers, setBrokers] = useState([])
+  const [query, setQuery] = useState('')
+
   useEffect(() => {
     fetch(`${API}/brokers`).then(r => r.json()).then(setBrokers).catch(() => {})
   }, [])
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    const sorted = [...brokers].sort((a, b) => {
+      if (a.id === 'custom') return 1
+      if (b.id === 'custom') return -1
+      return a.display_name.localeCompare(b.display_name)
+    })
+    if (!q) return sorted
+    return sorted.filter(b => b.display_name.toLowerCase().includes(q))
+  }, [brokers, query])
+
   return (
     <div className="screen">
       <header className="header">
@@ -31,11 +45,28 @@ function BrokerSelect({ onSelect }) {
         <h1>AERO TRADE</h1>
         <p>Select your broker</p>
       </header>
+
+      <div className="form" style={{ marginBottom: '1rem' }}>
+        <label>
+          Search brokers
+          <input
+            placeholder="Type broker name..."
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+          />
+        </label>
+      </div>
+
       <div className="broker-grid">
-        {brokers.map(b => (
+        {filtered.map(b => (
           <button key={b.id} className="broker-card" onClick={() => onSelect(b)}>
-            <strong>{b.display_name}</strong>
-            <span>{b.demo_server || 'Custom server'}</span>
+            <div className="broker-card-top">
+              <Logo size={36} src={b.logo_path || '/aero_trade_logo.png'} />
+              <div>
+                <strong>{b.display_name}</strong>
+                <span>{b.servers?.length ? b.servers.join(' / ') : 'Custom server entry'}</span>
+              </div>
+            </div>
           </button>
         ))}
       </div>
@@ -46,31 +77,74 @@ function BrokerSelect({ onSelect }) {
 function CredentialEntry({ broker, onSuccess, onBack }) {
   const [login, setLogin] = useState('')
   const [password, setPassword] = useState('')
-  const [isDemo, setIsDemo] = useState(true)
+  const [server, setServer] = useState(broker?.servers?.[0] || '')
   const [customServer, setCustomServer] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [showPassword, setShowPassword] = useState(false)
+  const [needsAccountTypeConfirm, setNeedsAccountTypeConfirm] = useState(false)
+  const [confirmedAccountType, setConfirmedAccountType] = useState('demo')
+
+  useEffect(() => {
+    setServer(broker?.servers?.[0] || '')
+    setCustomServer('')
+    setNeedsAccountTypeConfirm(false)
+    setConfirmedAccountType('demo')
+    setError('')
+  }, [broker])
+
+  const selectedServer = broker.id === 'custom' ? customServer.trim() : server
+
+  async function submitAccount(isRetry = false) {
+    const payload = {
+      broker_id: broker.id,
+      login: parseInt(login, 10),
+      password,
+      server: selectedServer,
+      custom_server: broker.id === 'custom' ? customServer.trim() : '',
+      is_demo_confirmed: needsAccountTypeConfirm || isRetry ? confirmedAccountType === 'demo' : null,
+    }
+
+    const res = await fetch(`${API}/accounts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      const detail = data.detail
+      if (detail?.code === 'ambiguous_server_type') {
+        setNeedsAccountTypeConfirm(true)
+        setError(detail.message || 'Please confirm whether this server is demo or real.')
+        return null
+      }
+      throw new Error((typeof detail === 'string' && detail) || data.message || 'Verification failed')
+    }
+
+    return data
+  }
 
   async function handleSubmit(e) {
     e.preventDefault()
     setLoading(true)
     setError('')
     try {
-      const res = await fetch(`${API}/accounts`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          broker_id: broker.id,
-          login: parseInt(login),
-          password,
-          is_demo: isDemo,
-          custom_server: broker.id === 'custom' ? customServer : '',
-        }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.detail || 'Verification failed')
-      onSuccess(data)
+      const data = await submitAccount(false)
+      if (data) onSuccess(data)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleConfirmedSubmit() {
+    setLoading(true)
+    setError('')
+    try {
+      const data = await submitAccount(true)
+      if (data) onSuccess(data)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -81,38 +155,151 @@ function CredentialEntry({ broker, onSuccess, onBack }) {
   return (
     <div className="screen">
       <header className="header">
-        <Logo size={36} />
-        <h2>{broker.display_name}</h2>
+        <Logo size={36} src={broker.logo_path || '/aero_trade_logo.png'} />
+        <div>
+          <h2>{broker.display_name}</h2>
+          <p>Enter your MT5 login, password, and server.</p>
+        </div>
         <button className="back-btn" onClick={onBack}>← Back</button>
       </header>
+
       <form className="form" onSubmit={handleSubmit}>
-        <label>Account Number<input value={login} onChange={e => setLogin(e.target.value)} required /></label>
-        <label>Password
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <input 
-              type={showPassword ? "text" : "password"} 
-              value={password} 
-              onChange={e => setPassword(e.target.value)} 
-              required 
-              style={{ flex: 1 }}
-            />
-          </div>
+        <label>
+          Account Number
+          <input value={login} onChange={e => setLogin(e.target.value)} required inputMode="numeric" />
         </label>
+
+        <label>
+          Password
+          <input
+            type={showPassword ? 'text' : 'password'}
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            required
+          />
+        </label>
+
         <label className="toggle">
           <input type="checkbox" checked={showPassword} onChange={e => setShowPassword(e.target.checked)} />
           Show Password
         </label>
-        {broker.id === 'custom' && (
-          <label>Server Name<input value={customServer} onChange={e => setCustomServer(e.target.value)} required /></label>
+
+        {broker.id === 'custom' ? (
+          <label>
+            Server
+            <input
+              value={customServer}
+              onChange={e => setCustomServer(e.target.value)}
+              placeholder="Enter exact MT5 server name"
+              required
+            />
+          </label>
+        ) : (
+          <label>
+            Server
+            <select value={server} onChange={e => setServer(e.target.value)} required>
+              {broker.servers.map(option => (
+                <option key={option} value={option}>{option}</option>
+              ))}
+            </select>
+          </label>
         )}
-        <label className="toggle">
-          <input type="checkbox" checked={isDemo} onChange={e => setIsDemo(e.target.checked)} />
-          Demo Account
-        </label>
+
+        {needsAccountTypeConfirm && (
+          <div className="confirm-panel">
+            <h3>Is this a Demo or Real account?</h3>
+            <p>
+              The custom server name <strong>{selectedServer}</strong> is ambiguous. We will not guess.
+            </p>
+            <div className="server-choice-group">
+              <label className="server-option">
+                <input
+                  type="radio"
+                  name="accountType"
+                  checked={confirmedAccountType === 'demo'}
+                  onChange={() => setConfirmedAccountType('demo')}
+                />
+                Demo
+              </label>
+              <label className="server-option">
+                <input
+                  type="radio"
+                  name="accountType"
+                  checked={confirmedAccountType === 'real'}
+                  onChange={() => setConfirmedAccountType('real')}
+                />
+                Real
+              </label>
+            </div>
+            <button type="button" onClick={handleConfirmedSubmit} disabled={loading}>
+              {loading ? 'Verifying...' : 'Confirm & Verify'}
+            </button>
+          </div>
+        )}
+
         {error && <div className="error">{error}</div>}
-        <button type="submit" disabled={loading}>{loading ? 'Verifying...' : 'Connect & Verify'}</button>
+        <button type="submit" disabled={loading || !selectedServer}>
+          {loading ? 'Verifying...' : 'Connect & Verify'}
+        </button>
       </form>
     </div>
+  )
+}
+
+function ModelStatusPanel() {
+  const [models, setModels] = useState([])
+
+  useEffect(() => {
+    let mounted = true
+    const load = async () => {
+      const res = await fetch(`${API}/models/status`).then(r => r.json()).catch(() => ({ models: [] }))
+      if (mounted) setModels(res.models || [])
+    }
+    load()
+    const iv = setInterval(load, 10000)
+    return () => { mounted = false; clearInterval(iv) }
+  }, [])
+
+  return (
+    <section>
+      <h3>Model Status</h3>
+      <div className="model-status-table-wrap">
+        <table className="model-status-table">
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>TF</th>
+              <th>History</th>
+              <th>Rows</th>
+              <th>Date Range</th>
+              <th>Model Version</th>
+              <th>Accuracy</th>
+              <th>Last Retrain</th>
+              <th>Outcome</th>
+            </tr>
+          </thead>
+          <tbody>
+            {models.map(row => {
+              const weak = row.weak_signal
+              const missing = !row.history_available
+              return (
+                <tr key={`${row.symbol}-${row.timeframe}`} className={missing ? 'status-missing' : weak ? 'status-weak' : ''}>
+                  <td>{row.symbol}</td>
+                  <td>{row.timeframe}</td>
+                  <td>{row.history_available ? 'Yes' : 'No'}</td>
+                  <td>{row.history_rows || 0}</td>
+                  <td>{row.history_date_range?.[0] && row.history_date_range?.[1] ? `${row.history_date_range[0]} → ${row.history_date_range[1]}` : '—'}</td>
+                  <td>{row.active_model_version || '—'}</td>
+                  <td>{row.active_model_accuracy != null ? Number(row.active_model_accuracy).toFixed(4) : '—'}</td>
+                  <td>{row.last_retrain_at || '—'}</td>
+                  <td>{row.last_retrain_outcome || '—'}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
   )
 }
 
@@ -141,19 +328,18 @@ function Dashboard({ account, onSettings }) {
         if (posRes) setPositions(Array.isArray(posRes) ? posRes : [])
         if (tradesRes) setTrades(tradesRes)
         if (actRes) setActivity(actRes.activity || [])
-        
+
         if (!toggling) {
           const isRunning = actRes && actRes.activity && actRes.activity.length > 0 && actRes.activity.some(a => a.message && a.message.includes('cycle'))
           setRunning(isRunning)
         }
-      } catch (e) {
-        // silent fail for polling
+      } catch {
       }
     }
     load()
     const iv = setInterval(load, 5000)
     return () => { mounted = false; clearInterval(iv) }
-  }, [account.account_id])
+  }, [account.account_id, toggling])
 
   async function toggleBot() {
     const id = account.account_id
@@ -187,6 +373,7 @@ function Dashboard({ account, onSettings }) {
           <span className={`badge ${info.is_demo ? 'demo' : 'live'}`}>
             {info.is_demo ? 'DEMO' : 'LIVE'}
           </span>
+          <p>{info.server || 'No server reported'}</p>
         </div>
         <button className="settings-btn" onClick={onSettings}>⚙ Settings</button>
       </header>
@@ -202,6 +389,8 @@ function Dashboard({ account, onSettings }) {
         {toggling ? '...' : (running ? '■ Stop Trading' : '▶ Start Trading')}
       </button>
       {error && <div className="error">{error}</div>}
+
+      <ModelStatusPanel />
 
       <section>
         <h3>Open Positions ({positions.length})</h3>
@@ -281,12 +470,12 @@ function Settings({ accountId, onBack }) {
       <div className="form">
         <label>Risk Per Trade
           <input type="number" step="0.01" value={settings.risk_per_trade || 0.02}
-            onChange={e => setSettings({...settings, risk_per_trade: parseFloat(e.target.value)})} />
+            onChange={e => setSettings({ ...settings, risk_per_trade: parseFloat(e.target.value) })} />
         </label>
         <label className="toggle">
           <input type="checkbox" checked={settings.aggressive_mode || false}
             disabled={!settings.is_demo}
-            onChange={e => setSettings({...settings, aggressive_mode: e.target.checked})} />
+            onChange={e => setSettings({ ...settings, aggressive_mode: e.target.checked })} />
           Aggressive Mode {settings.is_demo ? '(Demo only)' : '(Disabled on real)'}
         </label>
         {!settings.is_demo && (

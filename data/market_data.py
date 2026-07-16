@@ -2,12 +2,11 @@
 Market Data Feed - Real-time and historical price data
 """
 
-import asyncio
+
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
-from pathlib import Path
+from typing import Dict, Optional, cast
 
 from utils.logger import logger
 from config.settings import DATA_DIR, TRADING_CONFIG, DATA_CONFIG
@@ -42,7 +41,7 @@ class MarketDataFeed:
                 
                 if file_path.exists():
                     try:
-                        df = pd.read_parquet(file_path)
+                        df = cast(pd.DataFrame, pd.read_parquet(file_path))
                         self.data_cache[f"{symbol}_{timeframe}"] = df
                         logger.debug(f"Loaded {symbol} {timeframe}: {len(df)} bars")
                     except Exception as e:
@@ -58,13 +57,13 @@ class MarketDataFeed:
             if mt5_bridge.connected:
                 mt5_data = mt5_bridge.get_historical_data(symbol, timeframe, count=lookback)
                 if mt5_data is not None and len(mt5_data) > 0:
-                    self.data_cache[cache_key] = mt5_data
-                    return mt5_data.tail(lookback).copy() if len(mt5_data) >= lookback else mt5_data.copy()
+                    self.data_cache[cache_key] = cast(pd.DataFrame, mt5_data)
+                    return cast(pd.DataFrame, mt5_data.tail(lookback).copy() if len(mt5_data) >= lookback else mt5_data.copy())
         except Exception as e:
             logger.debug(f"MT5 data not available for {symbol}: {e}")
         
         if cache_key in self.data_cache:
-            df = self.data_cache[cache_key]
+            df = cast(pd.DataFrame, self.data_cache[cache_key])
             if len(df) >= lookback:
                 return df.iloc[-lookback:].copy()
             return df.copy()
@@ -80,18 +79,18 @@ class MarketDataFeed:
         try:
             if cache_key in self.data_cache:
                 # Append new data
-                df = self.data_cache[cache_key]
+                df = cast(pd.DataFrame, self.data_cache[cache_key])
                 
                 # Remove duplicates
-                new_data = new_data[~new_data.index.isin(df.index)]
+                new_data = cast(pd.DataFrame, new_data[~new_data.index.isin(df.index)])
                 
                 if len(new_data) > 0:
-                    df = pd.concat([df, new_data])
-                    df = df[~df.index.duplicated(keep='last')]
+                    df = cast(pd.DataFrame, pd.concat([df, new_data]))
+                    df = cast(pd.DataFrame, df[~df.index.duplicated(keep='last')])
                     
                     # Keep only last N days
                     cutoff = datetime.now() - timedelta(days=DATA_CONFIG["history_days"])
-                    df = df[df.index >= cutoff]
+                    df = cast(pd.DataFrame, df[df.index >= cutoff])
                     
                     self.data_cache[cache_key] = df
                     
@@ -132,7 +131,7 @@ class MarketDataFeed:
             if df is None or len(df) < 20:
                 return {}
             
-            close = df['close'].values
+            close = df['close'].to_numpy(dtype=float)
             
             # Moving Averages
             ma5 = np.mean(close[-5:]) if len(close) >= 5 else close[-1]
@@ -247,7 +246,7 @@ class MarketDataFeed:
             try:
                 symbol, timeframe = cache_key.split('_')
                 await self._save_data(symbol, timeframe, df)
-            except:
+            except Exception:
                 pass
         
         self.is_connected = False

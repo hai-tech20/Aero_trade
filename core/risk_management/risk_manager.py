@@ -2,12 +2,12 @@
 
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 from datetime import datetime
 
 from utils.logger import logger
 from config.settings import RISK_CONFIG, TRADING_CONFIG
-from core.symbols import symbol_asset_class, get_tick_value_from_broker
+from core.symbols import get_tick_value_from_broker
 
 
 class RiskManager:
@@ -29,17 +29,22 @@ class RiskManager:
         if df is None or len(df) < period + 1:
             return 0.0
         try:
-            high = df["high"].values if "high" in df.columns else df["High"].values
-            low = df["low"].values if "low" in df.columns else df["Low"].values
-            close = df["close"].values if "close" in df.columns else df["Close"].values
+            high = (df["high"] if "high" in df.columns else df["High"]).to_numpy(dtype=float)
+            low = (df["low"] if "low" in df.columns else df["Low"]).to_numpy(dtype=float)
+            close = (df["close"] if "close" in df.columns else df["Close"]).to_numpy(dtype=float)
             plus_dm = np.maximum(high[1:] - high[:-1], 0)
             minus_dm = np.maximum(low[:-1] - low[1:], 0)
             tr = np.maximum(np.maximum(high[1:] - low[1:], np.abs(high[1:] - close[:-1])), np.abs(low[1:] - close[:-1]))
-            atr = pd.Series(tr).rolling(window=period).mean().iloc[-1] if len(tr) >= period else np.mean(tr)
-            plus_di = 100 * pd.Series(plus_dm).rolling(window=period).mean() / (atr + 1e-9)
-            minus_di = 100 * pd.Series(minus_dm).rolling(window=period).mean() / (atr + 1e-9)
-            dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di + 1e-9)
-            adx = float(pd.Series(dx).rolling(window=period).mean().iloc[-1]) if len(dx) >= period else float(np.mean(dx))
+            tr_series = pd.Series(tr)
+            plus_dm_series = pd.Series(plus_dm)
+            minus_dm_series = pd.Series(minus_dm)
+            atr_values = tr_series.rolling(window=period).mean().tolist()
+            atr = float(atr_values[-1]) if len(tr) >= period else float(np.mean(tr))
+            plus_di_series = 100 * plus_dm_series.rolling(window=period).mean() / (atr + 1e-9)
+            minus_di_series = 100 * minus_dm_series.rolling(window=period).mean() / (atr + 1e-9)
+            dx_series = pd.Series(100 * np.abs(plus_di_series - minus_di_series) / (plus_di_series + minus_di_series + 1e-9))
+            adx_values = dx_series.rolling(window=period).mean().tolist()
+            adx = float(adx_values[-1]) if len(dx_series) >= period else float(np.mean(dx_series.to_numpy(dtype=float)))
             return adx
         except Exception:
             return 0.0
@@ -68,7 +73,7 @@ class RiskManager:
         fused_confidence: float,
         sentiment_agrees: bool,
         symbol: str,
-        symbol_info: dict = None,
+        symbol_info: Dict[str, Any] | None = None,
     ) -> float:
         if account_balance < 100:
             base_risk_pct = 0.02
@@ -98,7 +103,7 @@ class RiskManager:
         confidence: float = 1.0,
         use_compounding: bool = False,
         win_streak: int = 0,
-        symbol_info: dict = None,
+        symbol_info: Dict[str, Any] | None = None,
         is_demo: bool = True,
     ) -> float:
         aggressive = TRADING_CONFIG.get("aggressive_mode", False) and is_demo
@@ -137,8 +142,8 @@ class RiskManager:
         symbol: str,
         position_size: float,
         account_balance: float,
-        open_positions: List[Dict],
-        market_conditions: dict = None,
+        open_positions: List[Dict[str, Any]],
+        market_conditions: Dict[str, Any] | None = None,
         is_demo: bool = True,
         live_trading_enabled: bool = False,
     ) -> Tuple[bool, str]:

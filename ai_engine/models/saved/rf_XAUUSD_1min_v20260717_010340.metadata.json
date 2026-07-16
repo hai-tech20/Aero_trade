@@ -1,0 +1,25 @@
+{
+  "model_name": "rf_XAUUSD_1min",
+  "version": "20260717_010340",
+  "symbol": "XAUUSD",
+  "timeframe": "1min",
+  "trained_at": "2026-07-17T01:03:40.100583",
+  "training_reason": "gold_btc_final_pass",
+  "training_source": "verified_real_history",
+  "verified_real_history": true,
+  "history_path": "C:\\Users\\pc\\Desktop\\company projects\\fbs-ai-trader\\data\\XAUUSD_1min_history.parquet",
+  "history_rows": 90000,
+  "history_date_range": {
+    "start": "2026-04-06 11:56:00",
+    "end": "2026-07-16 19:33:00"
+  },
+  "historical_samples": 89933,
+  "trade_outcome_rows_since_last_run": 14,
+  "validation": {
+    "current_model_accuracy": 0.5202000555709919,
+    "candidate_model_accuracy": 0.5202000555709919,
+    "mistake_accuracy_before": null,
+    "mistake_accuracy_after": null,
+    "promoted": false
+  }
+}

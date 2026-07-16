@@ -5,8 +5,7 @@ Backtesting Engine - Test trading strategies on historical data
 import asyncio
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Any, Dict, Optional, cast
 import sys
 from pathlib import Path
 
@@ -14,8 +13,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent))
 
 from utils.logger import logger
-from ai_engine.models.predictor import ai_predictor
-from decision_maker.signal_fusion import signal_fusion
+from ai_engine.models.predictor import get_ai_predictor
 from core.risk_management.risk_manager import risk_manager
 from data.market_data import market_data
 
@@ -34,12 +32,12 @@ class BacktestEngine:
     def __init__(self, initial_balance: float = 10000.0):
         self.initial_balance = initial_balance
         self.balance = initial_balance
-        self.positions = []
-        self.trade_history = []
-        self.equity_curve = []
+        self.positions: list[Dict[str, Any]] = []
+        self.trade_history: list[Dict[str, Any]] = []
+        self.equity_curve: list[float] = []
         
         # Performance metrics
-        self.metrics = {}
+        self.metrics: Dict[str, Any] = {}
         self.data_source_tag = "broker"
         self.data_source = "broker"
         self.data_source = "broker"
@@ -72,11 +70,16 @@ class BacktestEngine:
                 return False
             
             logger.info(f"Backtesting {symbol} {timeframe}")
-            logger.info(f"Period: {df.index[0].date()} to {df.index[-1].date()}")
+            idx = pd.DatetimeIndex(pd.to_datetime(df.index))
+            idx_list = idx.to_list()
+            start_label = idx_list[0].date()
+            end_label = idx_list[-1].date()
+            logger.info(f"Period: {start_label} to {end_label}")
             logger.info(f"Data points: {len(df)}")
             
             # Initialize AI predictor
-            if not ai_predictor.is_trained:
+            predictor = get_ai_predictor()
+            if not predictor.is_trained:
                 logger.warning("AI models not trained. Training with backtest data...")
                 await self._train_with_data(df, symbol, timeframe)
             
@@ -133,7 +136,7 @@ class BacktestEngine:
                 end_dt = pd.to_datetime(end_date)
                 df = df[df.index <= end_dt]
             
-            return df
+            return cast(pd.DataFrame, df)
             
         except Exception as e:
             logger.error(f"Error loading historical data: {e}")
@@ -143,6 +146,7 @@ class BacktestEngine:
         """Train AI models with historical data"""
         try:
             # Prepare training data
+            predictor = get_ai_predictor()
             X = []
             y = []
             
@@ -151,7 +155,7 @@ class BacktestEngine:
             
             for i in range(lookback, len(df) - horizon):
                 window = df.iloc[i-lookback:i]
-                features = await ai_predictor.prepare_features(window)
+                features = await predictor.prepare_features(window)
                 
                 if features.size > 0:
                     current_price = df['close'].iloc[i]
@@ -166,7 +170,7 @@ class BacktestEngine:
             
             if len(X_train) > 100:
                 # Train models
-                await ai_predictor.train(X_train, y_train, model_name='rf_5min', save=False)
+                await predictor.train(X_train, y_train, model_name='rf_5min', save=False)
                 logger.success(f"Trained model with {len(X_train)} samples")
             
         except Exception as e:
@@ -190,7 +194,8 @@ class BacktestEngine:
                 market_data.data_cache[f"{symbol}_{timeframe}"] = current_data
                 
                 # Get AI prediction
-                ai_prediction = await ai_predictor.predict(current_data, timeframe=timeframe)
+                predictor = get_ai_predictor()
+                ai_prediction = await predictor.predict(current_data, timeframe=timeframe, symbol=symbol)
                 
                 if ai_prediction.direction == 0:
                     continue  # No signal
@@ -263,7 +268,7 @@ class BacktestEngine:
         
         logger.info(f"Backtest completed: {trade_count} trades executed")
     
-    def _close_position(self, position: Dict, exit_price: float, exit_time, reason: str):
+    def _close_position(self, position: Dict[str, Any], exit_price: float, exit_time: Any, reason: str):
         """Close a position and calculate P&L"""
         fee_rate = 0.001
         entry_price = position['entry_price']
@@ -393,7 +398,7 @@ class BacktestEngine:
         logger.info("")
         logger.info(f"Avg AI Confidence: {metrics['avg_ai_confidence']:.2f}")
         
-        if metrics['total_pnl'] > 0:
+        if float(metrics['total_pnl']) > 0:
             logger.success("✅ Backtest PASSED - Strategy is profitable")
         else:
             logger.warning("⚠️ Backtest FAILED - Strategy is not profitable")

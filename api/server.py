@@ -1,7 +1,6 @@
 """FastAPI backend for AERO TRADE."""
 
 import asyncio
-import json
 import threading
 from typing import Dict, Optional
 from contextlib import asynccontextmanager
@@ -13,7 +12,7 @@ from pydantic import BaseModel
 from pathlib import Path
 
 from config.settings import APP_NAME, TRADING_CONFIG, BROKER_CONFIG
-from core.broker.broker_registry import SUPPORTED_BROKERS, broker_to_dict, get_broker
+from core.broker.broker_registry import SUPPORTED_BROKERS, broker_to_dict, get_broker, is_demo_server
 from core.broker.credential_store import (
     create_account, list_accounts, get_account_meta, update_account_meta,
     load_broker_credentials, delete_account,
@@ -21,18 +20,21 @@ from core.broker.credential_store import (
 from core.broker.mt5_broker_client import MT5BrokerClient
 from core.engine.aero_trade_bot import AeroTradeBot
 from core.ledger.trade_ledger import get_closed_trades, get_trade_summary, init_ledger
+from ai_engine.training.model_status import get_model_status
+from utils.logger import logger
 
 # Active bot instances per account
 _bots: Dict[str, AeroTradeBot] = {}
-_bot_tasks: Dict[str, asyncio.Task] = {}
+_bot_tasks: Dict[str, asyncio.Task[object]] = {}
 
 
 class CreateAccountRequest(BaseModel):
     broker_id: str
     login: int
     password: str
-    is_demo: bool = True
+    server: str = ""
     custom_server: str = ""
+    is_demo_confirmed: Optional[bool] = None
     mt5_path: Optional[str] = None
 
 
@@ -81,15 +83,25 @@ def list_brokers():
 @app.post("/accounts")
 def create_account_endpoint(req: CreateAccountRequest):
     broker = get_broker(req.broker_id)
-    server = req.custom_server or (broker.demo_server if req.is_demo else broker.real_server)
+    server = (req.server or req.custom_server).strip()
     if not server:
-        raise HTTPException(400, "Server name required for custom broker")
+        raise HTTPException(400, "Server name is required")
 
-    ok, msg, info = MT5BrokerClient.verify_credentials(req.login, req.password, server, req.is_demo, path=req.mt5_path)
+    resolved_demo = is_demo_server(server, broker)
+    if resolved_demo is None:
+        if req.is_demo_confirmed is None:
+            raise HTTPException(400, {
+                "code": "ambiguous_server_type",
+                "message": "Server name does not clearly indicate Demo or Real. Confirm account type before proceeding.",
+                "server": server,
+            })
+        resolved_demo = req.is_demo_confirmed
+
+    ok, msg, info = MT5BrokerClient.verify_credentials(req.login, req.password, server, resolved_demo, path=req.mt5_path or "")
     if not ok:
         raise HTTPException(401, msg)
 
-    account_id = create_account(req.broker_id, req.login, req.password, server, req.is_demo, broker.display_name, req.mt5_path)
+    account_id = create_account(req.broker_id, req.login, req.password, server, resolved_demo, broker.display_name, req.mt5_path or "")
     BROKER_CONFIG["name"] = broker.display_name
     return {
         "account_id": account_id,
@@ -98,7 +110,7 @@ def create_account_endpoint(req: CreateAccountRequest):
         "currency": info.get("currency", "USD"),
         "leverage": info.get("leverage", 100),
         "server": server,
-        "is_demo": req.is_demo,
+        "is_demo": resolved_demo,
         "broker": broker.display_name,
     }
 
@@ -200,6 +212,11 @@ def get_activity(account_id: str, limit: int = 50):
     return {"activity": _bots[account_id].get_activity(limit=limit)}
 
 
+@app.get("/models/status")
+def model_status():
+    return {"models": get_model_status()}
+
+
 @app.get("/debug/mt5-test")
 def debug_mt5_test():
     try:
@@ -209,8 +226,8 @@ def debug_mt5_test():
         client = MT5BrokerClient('debug')
         import asyncio
         loop = asyncio.get_event_loop()
-        ok = loop.run_until_complete(client.connect_with_credentials(creds))
-        result = {
+        loop.run_until_complete(client.connect_with_credentials(creds))
+        result: dict[str, object] = {
             "connected": client.connected,
             "use_mt5": client.use_mt5,
             "mt5_bridge": client.mt5_bridge is not None,

@@ -1,7 +1,7 @@
 """Broker presets for MT5-based brokers."""
 
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 
 
 @dataclass
@@ -40,4 +40,23 @@ def broker_to_dict(broker: BrokerPreset) -> dict:
         "real_server": broker.real_server,
         "website": broker.website,
         "logo_path": broker.logo_path,
+        "servers": [s for s in [broker.demo_server, broker.real_server] if s],
     }
+
+
+def is_demo_server(server_name: str, broker: Optional[BrokerPreset] = None) -> Optional[bool]:
+    server_name = (server_name or "").strip()
+    if not server_name:
+        return None
+
+    if broker and server_name == broker.demo_server:
+        return True
+    if broker and server_name == broker.real_server:
+        return False
+
+    lowered = server_name.lower()
+    if "demo" in lowered or "trial" in lowered or "practice" in lowered:
+        return True
+    if "real" in lowered or "live" in lowered:
+        return False
+    return None

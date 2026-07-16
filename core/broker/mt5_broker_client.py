@@ -4,6 +4,7 @@ Works with any broker offering MT5 login.
 """
 
 import asyncio
+import concurrent.futures
 import time
 import random
 from typing import Dict, List, Optional
@@ -32,12 +33,12 @@ class MT5BrokerClient:
 
     async def connect(
         self,
-        login: int = None,
-        password: str = None,
-        server: str = None,
+        login: Optional[int] = None,
+        password: Optional[str] = None,
+        server: Optional[str] = None,
         demo: bool = True,
         broker_id: str = "custom",
-        mt5_path: str = None,
+        mt5_path: Optional[str] = None,
     ) -> bool:
         try:
             self.is_demo = demo
@@ -45,7 +46,7 @@ class MT5BrokerClient:
                 self.broker_preset = get_broker(broker_id)
                 BROKER_CONFIG["name"] = self.broker_preset.display_name
 
-            if login and password and server:
+            if login is not None and password is not None and server is not None:
                 return await self._connect_mt5(login, password, server, demo, mt5_path)
             return await self._connect_mock(demo)
         except Exception as e:
@@ -62,9 +63,8 @@ class MT5BrokerClient:
             mt5_path=creds.get("mt5_path"),
         )
 
-    async def _connect_mt5(self, login: int, password: str, server: str, demo: bool, path: str = None) -> bool:
+    async def _connect_mt5(self, login: int, password: str, server: str, demo: bool, path: Optional[str] = None) -> bool:
         try:
-            import MetaTrader5
             self.mt5_bridge = MT5Bridge()
             loop = asyncio.get_event_loop()
             try:
@@ -116,11 +116,10 @@ class MT5BrokerClient:
         return True
 
     @staticmethod
-    def verify_credentials(login: int, password: str, server: str, demo: bool = True, timeout: int = 15, path: str = None) -> tuple:
+    def verify_credentials(login: int, password: str, server: str, demo: bool = True, timeout: int = 15, path: Optional[str] = None) -> tuple:
         """Synchronous credential verification with timeout."""
         bridge = MT5Bridge()
         try:
-            import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor() as pool:
                 future = pool.submit(bridge.connect, login, password, server, demo, path)
                 success = future.result(timeout=timeout)
@@ -175,7 +174,7 @@ class MT5BrokerClient:
         if self.use_mt5 and self.mt5_bridge:
             result = self.mt5_bridge.close_order(order_id)
             if result.get("success"):
-                positions = self.mt5_bridge.get_positions()
+                self.mt5_bridge.get_positions()
                 # P&L from last deal — simplified
                 result["pnl_usd"] = kwargs.get("pnl_usd", 0)
             return result
