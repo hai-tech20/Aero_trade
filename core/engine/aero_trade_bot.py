@@ -100,19 +100,18 @@ class AeroTradeBot:
         self.account_info = await self.broker.get_account_info()
         self.initial_balance = self.account_info.get("balance", 0)
 
+        configured_pairs = [str(pair) for pair in TRADING_CONFIG.get("pairs", ["EURUSD"])]
         if self.broker.use_mt5 and self.broker.mt5_bridge:
             self.mt5_bridge = self.broker.mt5_bridge
             await asyncio.sleep(1)
             all_symbols = self.mt5_bridge.get_all_symbols()
-            prefixes = ["EUR", "GBP", "USD", "JPY", "AUD", "NZD", "CAD", "CHF", "XAU", "BTC"]
-            major = [s for s in all_symbols if any(s.upper().startswith(p) for p in prefixes)]
-            self.available_symbols = (major or all_symbols)[:TRADING_CONFIG.get("max_symbols", 50)]
-            # Resolve BTC symbol name per broker
-            btc = next((s for s in all_symbols if "BTC" in s.upper()), None)
-            if btc and btc not in self.available_symbols:
-                self.available_symbols.append(btc)
+            available = [symbol for symbol in configured_pairs if symbol in all_symbols]
+            missing = [symbol for symbol in configured_pairs if symbol not in all_symbols]
+            self.available_symbols = available
+            if missing:
+                self.logger.warning(f"Configured symbols not available from broker: {', '.join(missing)}")
         else:
-            self.available_symbols = TRADING_CONFIG.get("pairs", ["EURUSD"])
+            self.available_symbols = configured_pairs
 
         await self.market_data.connect()
         self.logger.info(f"{APP_NAME} initialized — {len(self.available_symbols)} symbols")

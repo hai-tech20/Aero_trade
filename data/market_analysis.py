@@ -3,9 +3,8 @@ Real market analysis via Finnhub, Alpha Vantage, and FMP.
 """
 
 import os
-import asyncio
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import requests
 
@@ -280,12 +279,13 @@ class MarketAnalysis:
 
             # If sentiment is neutral (no API keys), use a simple price-based sentiment
             if sentiment.get("confidence", 0.0) <= 0.1:
-                from data.market_data import MarketDataFeed
-                feed = MarketDataFeed()
+                from data.market_data import market_data
                 try:
-                    df = await feed.get_latest_data(symbol, "5min", 50)
+                    if not market_data.is_connected:
+                        await market_data.connect()
+                    df = await market_data.get_latest_data(symbol, "5min", 50)
                     if df is not None and len(df) >= 20:
-                        close = df["close"].values
+                        close = df["close"].to_numpy(dtype=float)
                         recent_change = (close[-1] - close[-20]) / close[-20]
                         if recent_change > 0.001:
                             sentiment["bullish"] = 0.6
