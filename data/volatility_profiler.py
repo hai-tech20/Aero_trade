@@ -2,6 +2,7 @@
 
 from typing import Dict
 import pandas as pd
+from core.symbols import symbol_asset_class, get_pip_size
 
 
 def compute_volatility_profile(df: pd.DataFrame, is_crypto: bool = False) -> Dict:
@@ -66,24 +67,3 @@ def get_symbol_profile(symbol: str) -> Dict:
             except Exception:
                 continue
     return {}
-
-
-def symbol_asset_class(symbol: str) -> str:
-    base = symbol.upper()
-    if "BTC" in base or "ETH" in base:
-        return "crypto"
-    if base.startswith("XAU") or base.startswith("XAG"):
-        return "metal"
-    return "forex"
-
-
-def get_pip_size(symbol: str, point: float = 0.00001) -> float:
-    cls = symbol_asset_class(symbol)
-    if cls == "crypto":
-        return 1.0
-    if cls == "metal":
-        return 0.01
-    base = symbol.upper()
-    if "JPY" in base:
-        return 0.01
-    return 0.0001
