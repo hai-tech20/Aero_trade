@@ -4,7 +4,7 @@ Trading Bot Configuration — AERO TRADE
 
 import os
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Any, Dict
 
 APP_NAME = "AERO TRADE"
 
@@ -21,7 +21,14 @@ for d in (LOG_DIR, DATA_DIR, MODEL_DIR, CACHE_DIR, ASSETS_DIR):
 
 TRADING_CONFIG: Dict[str, Any] = {
     "demo_mode": True,
-    "pairs": ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "BTCUSD"],
+    "pairs": [
+        "EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "BTCUSD",
+        "EURCAD", "GBPCHF", "GBPJPY", "USDCAD",
+        "AUDUSD", "NZDUSD", "USDCHF", "EURGBP", "EURJPY", "EURAUD", "EURNZD", "EURCHF",
+        "GBPAUD", "GBPCAD", "GBPNZD", "AUDJPY", "NZDJPY", "CADJPY", "CHFJPY",
+        "AUDCAD", "AUDNZD", "AUDCHF", "NZDCAD", "NZDCHF", "CADCHF",
+        "USDZAR", "USDMXN", "USDSGD", "USDNOK", "USDSEK",
+    ],
     "timeframes": ["1min", "5min", "15min"],
     "risk_per_trade": 0.02,
     "max_daily_loss": 0.05,

@@ -371,8 +371,29 @@ class MT5Bridge:
             return {"code": None, "message": f"last_error unavailable: {e}", "raw": None}
         return {"code": None, "message": "", "raw": None}
 
+    def ensure_symbol_selected(self, symbol: str) -> bool:
+        try:
+            def select_symbol() -> Any:
+                return mt5_api.symbol_select(symbol, True)
+            selected = bool(self._call_mt5_with_timeout(select_symbol, timeout=10))
+            info = self.get_symbol_info(symbol)
+            visible = bool(info.get("visible", False)) if info else False
+            if not selected or not info or not visible:
+                logger.warning(
+                    f"Symbol selection check failed for {symbol}: selected={selected} visible={visible} info_exists={bool(info)} | last_error={self._get_last_error_details()['raw']}"
+                )
+                return False
+            return True
+        except Exception as e:
+            logger.error(f"Error selecting symbol {symbol}: {e}")
+            logger.error(f"Symbol selection last_error {symbol}: {self._get_last_error_details()}")
+            return False
+
     def get_historical_data(self, symbol: str, timeframe: str, count: int = 1000) -> Optional[pd.DataFrame]:
         try:
+            if not self.ensure_symbol_selected(symbol):
+                logger.error(f"Historical fetch aborted — symbol not selected/visible: {symbol}")
+                return None
             mt5_tf = self._tf_map().get(timeframe, mt5_api.TIMEFRAME_M5)
             last_err = None
             for attempt in range(3):
@@ -405,6 +426,9 @@ class MT5Bridge:
 
     def get_historical_data_before(self, symbol: str, timeframe: str, before_dt: datetime, count: int = 5000) -> Optional[pd.DataFrame]:
         try:
+            if not self.ensure_symbol_selected(symbol):
+                logger.error(f"Paged historical fetch aborted — symbol not selected/visible: {symbol}")
+                return None
             mt5_tf = self._tf_map().get(timeframe, mt5_api.TIMEFRAME_M5)
             last_err = None
             for attempt in range(3):

@@ -1,7 +1,7 @@
 """Symbol mapping and pip/tick utilities for FX, metals, and crypto."""
 
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List
 
 # MT5 symbol -> Finnhub/Alpha Vantage query identifiers
 SYMBOL_NEWS_MAP: Dict[str, List[str]] = {
@@ -12,6 +12,32 @@ SYMBOL_NEWS_MAP: Dict[str, List[str]] = {
     "USDCAD": ["USD", "CAD", "FOREX:USDCAD"],
     "USDCHF": ["USD", "CHF", "FOREX:USDCHF"],
     "NZDUSD": ["NZD", "USD", "FOREX:NZDUSD"],
+    "EURCAD": ["EUR", "CAD", "FOREX:EURCAD"],
+    "GBPCHF": ["GBP", "CHF", "FOREX:GBPCHF"],
+    "GBPJPY": ["GBP", "JPY", "FOREX:GBPJPY"],
+    "EURGBP": ["EUR", "GBP", "FOREX:EURGBP"],
+    "EURJPY": ["EUR", "JPY", "FOREX:EURJPY"],
+    "EURAUD": ["EUR", "AUD", "FOREX:EURAUD"],
+    "EURNZD": ["EUR", "NZD", "FOREX:EURNZD"],
+    "EURCHF": ["EUR", "CHF", "FOREX:EURCHF"],
+    "GBPAUD": ["GBP", "AUD", "FOREX:GBPAUD"],
+    "GBPCAD": ["GBP", "CAD", "FOREX:GBPCAD"],
+    "GBPNZD": ["GBP", "NZD", "FOREX:GBPNZD"],
+    "AUDJPY": ["AUD", "JPY", "FOREX:AUDJPY"],
+    "NZDJPY": ["NZD", "JPY", "FOREX:NZDJPY"],
+    "CADJPY": ["CAD", "JPY", "FOREX:CADJPY"],
+    "CHFJPY": ["CHF", "JPY", "FOREX:CHFJPY"],
+    "AUDCAD": ["AUD", "CAD", "FOREX:AUDCAD"],
+    "AUDNZD": ["AUD", "NZD", "FOREX:AUDNZD"],
+    "AUDCHF": ["AUD", "CHF", "FOREX:AUDCHF"],
+    "NZDCAD": ["NZD", "CAD", "FOREX:NZDCAD"],
+    "NZDCHF": ["NZD", "CHF", "FOREX:NZDCHF"],
+    "CADCHF": ["CAD", "CHF", "FOREX:CADCHF"],
+    "USDZAR": ["USD", "ZAR", "FOREX:USDZAR"],
+    "USDMXN": ["USD", "MXN", "FOREX:USDMXN"],
+    "USDSGD": ["USD", "SGD", "FOREX:USDSGD"],
+    "USDNOK": ["USD", "NOK", "FOREX:USDNOK"],
+    "USDSEK": ["USD", "SEK", "FOREX:USDSEK"],
     "XAUUSD": ["gold", "XAU", "FOREX:XAUUSD"],
     "BTCUSD": ["bitcoin", "BTC", "CRYPTO:BTC"],
 }

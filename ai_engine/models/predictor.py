@@ -15,7 +15,7 @@ from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import SGDClassifier
 from sklearn.preprocessing import StandardScaler
 
-from ai_engine.models.model_keys import base_model_key_for_timeframe, make_model_key, make_scaler_key
+from ai_engine.models.model_keys import make_model_key, make_scaler_key
 from ai_engine.training.retraining_service import RetrainingService
 from config.settings import MODEL_DIR
 from utils.logger import TradingLogger
@@ -254,27 +254,18 @@ class HybridAIPredictor:
             
             # Select model
             if model_type == 'auto':
-                # Try to find model for this timeframe
                 preferred_family = 'gbm' if timeframe == '15min' else 'rf'
                 symbol_key = make_model_key(symbol, timeframe, preferred_family)
-                timeframe_key = base_model_key_for_timeframe(timeframe)
-                model_key = symbol_key if symbol_key in self.models else (timeframe_key if timeframe_key in self.models else None)
+                model_key = symbol_key if symbol_key in self.models else None
                 if model_key is None:
-                    # Fallback to any available model
-                    if len(self.models) > 0:
-                        model_key = list(self.models.keys())[0]
-                    else:
-                        logger.warning("No models available")
-                        return self._get_neutral_prediction(timeframe)
+                    logger.warning(f"No active symbol-qualified model for {symbol} {timeframe}")
+                    return self._get_neutral_prediction(timeframe)
             else:
                 model_key = f'{model_type}_{timeframe}'
             
             if model_key not in self.models:
-                logger.warning(f"Model {model_key} not found, using default")
-                if len(self.models) > 0:
-                    model_key = list(self.models.keys())[0]
-                else:
-                    return self._get_neutral_prediction(timeframe)
+                logger.warning(f"Model {model_key} not found for {symbol} {timeframe}")
+                return self._get_neutral_prediction(timeframe)
             
             model = self.models[model_key]
             

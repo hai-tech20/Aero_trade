@@ -186,6 +186,28 @@
       "aggressive_mode": false,
       "enabled_pairs": [],
       "settings": {}
+    },
+    "9a7a2885-db58-4920-9f47-eabb4dbebd0d": {
+      "broker_id": "fbs",
+      "login": 110727345,
+      "server": "FBS-Real",
+      "is_demo": false,
+      "display_name": "FBS",
+      "live_trading_enabled": false,
+      "aggressive_mode": false,
+      "enabled_pairs": [],
+      "settings": {}
+    },
+    "755482df-df53-4377-86d8-95a7cb08e032": {
+      "broker_id": "fbs",
+      "login": 102790591,
+      "server": "FBS-Demo",
+      "is_demo": true,
+      "display_name": "FBS",
+      "live_trading_enabled": false,
+      "aggressive_mode": false,
+      "enabled_pairs": [],
+      "settings": {}
     }
   }
 }

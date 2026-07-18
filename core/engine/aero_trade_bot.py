@@ -15,6 +15,7 @@ import pandas as pd
 sys.path.append(str(Path(__file__).parent))
 
 from ai_engine.models.predictor import HybridAIPredictor
+from ai_engine.models.model_keys import make_model_key
 from decision_maker.signal_fusion import SignalFusion, Signal, SignalSource, FusedSignal
 from core.broker.mt5_broker_client import MT5BrokerClient
 from core.broker.credential_store import get_account_meta
@@ -180,7 +181,15 @@ class AeroTradeBot:
             self.logger.error(f"Iteration error: {e}")
             self._log_activity("-", f"cycle error — {e}")
 
+    def _has_active_trading_model(self, symbol: str, timeframe: str = "1min") -> bool:
+        family = "gbm" if timeframe == "15min" else "rf"
+        model_key = make_model_key(symbol, timeframe, family)
+        return model_key in self.ai_predictor.models
+
     async def _process_symbol(self, symbol: str):
+        if not self._has_active_trading_model(symbol, "1min"):
+            self._log_activity(symbol, "analyzed — no active promoted 1min model for symbol — trading disabled")
+            return
         df_1min: pd.DataFrame | None = None
         df_5min: pd.DataFrame | None = None
         if self.mt5_bridge:
@@ -233,7 +242,7 @@ class AeroTradeBot:
         # AI signal
         try:
             ai_pred = await self.ai_predictor.predict(df_1min, timeframe="1min", symbol=symbol)
-            if ai_pred:
+            if ai_pred and ai_pred.confidence > 0 and ai_pred.direction != 0:
                 await self.signal_fusion.add_signal(Signal(
                     source=SignalSource.AI,
                     direction=ai_pred.direction,
@@ -242,8 +251,13 @@ class AeroTradeBot:
                     timestamp=datetime.now().timestamp(),
                     metadata={"model": ai_pred.model_used},
                 ))
+            else:
+                self._log_activity(symbol, "analyzed — no active AI prediction for symbol — trading disabled")
+                return
         except Exception as e:
             self.logger.warning(f"AI prediction failed: {e}")
+            self._log_activity(symbol, "analyzed — AI prediction failed — trading disabled")
+            return
 
         # Technical signal
         tech = await self.get_technical_signal(df_1min, market_bias)
