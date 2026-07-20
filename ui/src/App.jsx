@@ -262,7 +262,8 @@ function ModelStatusPanel() {
 
   return (
     <section>
-      <h3>Model Status</h3>
+      <details>
+        <summary style={{cursor: 'pointer', fontWeight: 'bold', fontSize: '1.1em'}}>Model Status (click to expand)</summary>
       <div className="model-status-table-wrap">
         <table className="model-status-table">
           <thead>
@@ -299,6 +300,7 @@ function ModelStatusPanel() {
           </tbody>
         </table>
       </div>
+      </details>
     </section>
   )
 }

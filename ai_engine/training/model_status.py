@@ -15,6 +15,22 @@ def _read_json(path: Path) -> Optional[Dict[str, Any]]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def get_best_timeframe_for_symbol(symbol: str) -> Optional[Dict[str, Any]]:
+    """Return the best-performing active model's timeframe/accuracy for this symbol, or None."""
+    best: Optional[Dict[str, Any]] = None
+    for timeframe in TRADING_CONFIG.get("timeframes", []):
+        family = "gbm" if timeframe == "15min" else "rf"
+        model_name = make_model_key(symbol, timeframe, family)
+        metadata = _read_json(MODEL_DIR / f"{model_name}.metadata.json")
+        if not metadata:
+            continue
+        accuracy = metadata.get("validation", {}).get("candidate_model_accuracy")
+        if accuracy is None:
+            continue
+        if best is None or accuracy > best["accuracy"]:
+            best = {"timeframe": timeframe, "accuracy": accuracy, "family": family}
+    return best
+
 def _latest_versioned_metadata(prefix: str, symbol: str, timeframe: str) -> Optional[Dict[str, Any]]:
     candidates: list[tuple[str, Dict[str, Any]]] = []
     for path in MODEL_DIR.glob(f"{prefix}_v*.metadata.json"):

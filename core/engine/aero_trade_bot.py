@@ -16,6 +16,8 @@ sys.path.append(str(Path(__file__).parent))
 
 from ai_engine.models.predictor import HybridAIPredictor
 from ai_engine.models.model_keys import make_model_key
+from ai_engine.training.model_status import get_best_timeframe_for_symbol
+from core.sessions import is_favorable_session
 from decision_maker.signal_fusion import SignalFusion, Signal, SignalSource, FusedSignal
 from core.broker.mt5_broker_client import MT5BrokerClient
 from core.broker.credential_store import get_account_meta
@@ -187,23 +189,34 @@ class AeroTradeBot:
         return model_key in self.ai_predictor.models
 
     async def _process_symbol(self, symbol: str):
-        if not self._has_active_trading_model(symbol, "1min"):
-            self._log_activity(symbol, "analyzed — no active promoted 1min model for symbol — trading disabled")
+        best = get_best_timeframe_for_symbol(symbol)
+        if best is None:
+            self._log_activity(symbol, "analyzed — no active promoted model for symbol (checked 1min/5min/15min) — trading disabled")
             return
+        active_timeframe = best["timeframe"]
+
+        if not is_favorable_session(symbol):
+            self._log_activity(symbol, f"analyzed — outside favorable trading session for {symbol} — skipped")
+            return
+
         df_1min: pd.DataFrame | None = None
         df_5min: pd.DataFrame | None = None
+        df_15min: pd.DataFrame | None = None
         if self.mt5_bridge:
             df_1min = self.mt5_bridge.get_historical_data(symbol, "1min", count=200)
             df_5min = self.mt5_bridge.get_historical_data(symbol, "5min", count=200)
+            df_15min = self.mt5_bridge.get_historical_data(symbol, "15min", count=200)
         if df_1min is None or len(df_1min) < 50:
             df_1min = await self.market_data.get_latest_data(symbol, "1min", lookback=200)
         if df_5min is None or len(df_5min) < 20:
             df_5min = await self.market_data.get_latest_data(symbol, "5min", lookback=200)
+        if df_15min is None or len(df_15min) < 20:
+            df_15min = await self.market_data.get_latest_data(symbol, "15min", lookback=200)
         if df_1min is None or len(df_1min) < 50:
             self._log_activity(symbol, "analyzed — no data available — skipped")
             return
 
-        self._log_activity(symbol, "analyzed — starting signal evaluation")
+        self._log_activity(symbol, f"analyzed — using {active_timeframe} model (accuracy {best['accuracy']:.4f}, best available)")
 
         # Market analysis + sentiment
         market_bias = await market_analysis.analyze_market_conditions(symbol)
@@ -241,7 +254,9 @@ class AeroTradeBot:
 
         # AI signal
         try:
-            ai_pred = await self.ai_predictor.predict(df_1min, timeframe="1min", symbol=symbol)
+            df_map = {"1min": df_1min, "5min": df_5min, "15min": df_15min}
+            df_for_ai = df_map.get(active_timeframe, df_1min)
+            ai_pred = await self.ai_predictor.predict(df_for_ai, timeframe=active_timeframe, symbol=symbol)
             if ai_pred and ai_pred.confidence > 0 and ai_pred.direction != 0:
                 await self.signal_fusion.add_signal(Signal(
                     source=SignalSource.AI,

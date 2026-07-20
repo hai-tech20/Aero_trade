@@ -1,0 +1,25 @@
+{
+  "model_name": "rf_EURUSD_1min",
+  "version": "20260720_224846",
+  "symbol": "EURUSD",
+  "timeframe": "1min",
+  "trained_at": "2026-07-20T22:48:46.303612",
+  "training_reason": "available_pairs_retrain",
+  "training_source": "verified_real_history",
+  "verified_real_history": true,
+  "history_path": "C:\\Users\\pc\\Desktop\\company projects\\fbs-ai-trader\\data\\EURUSD_1min_history.parquet",
+  "history_rows": 96447,
+  "history_date_range": {
+    "start": "2026-04-10 01:13:00",
+    "end": "2026-07-16 19:12:00"
+  },
+  "historical_samples": 96380,
+  "trade_outcome_rows_since_last_run": 14,
+  "validation": {
+    "current_model_accuracy": 0.5193155302048224,
+    "candidate_model_accuracy": 0.5193155302048224,
+    "mistake_accuracy_before": null,
+    "mistake_accuracy_after": null,
+    "promoted": false
+  }
+}

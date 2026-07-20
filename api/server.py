@@ -255,7 +255,7 @@ def _run_bot_in_thread(account_id: str, creds: dict):
             bot = AeroTradeBot(account_id)
             await bot.initialize(creds)
             _bots[account_id] = bot
-            _bot_tasks[account_id] = asyncio.create_task(bot.run())
+            await bot.run()
         except Exception as e:
             logger.error(f"Failed to start bot for {account_id}: {e}")
 

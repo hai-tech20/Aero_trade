@@ -26,6 +26,10 @@ class MT5Bridge:
     def __init__(self):
         self.connected = False
         self.account_info = {}
+        self._last_login: Optional[int] = None
+        self._last_password: Optional[str] = None
+        self._last_server: Optional[str] = None
+        self._last_path: Optional[str] = None
 
     def _call_mt5_with_timeout(self, mt5_func: Callable[..., Any], *args: Any, timeout: int = 10, **kwargs: Any) -> Any:
         """Run an MT5 call in a thread pool with timeout, serialized with a lock."""
@@ -88,6 +92,10 @@ class MT5Bridge:
                     return False
                 account_type = "DEMO" if demo else "REAL"
                 broker_name = BROKER_CONFIG.get("name") or server
+                self._last_login = login
+                self._last_password = password
+                self._last_server = server
+                self._last_path = path
                 logger.success(f"{APP_NAME}: Connected to {broker_name} {account_type} #{login}")
                 return True
 
@@ -101,6 +109,15 @@ class MT5Bridge:
         except Exception as e:
             logger.error(f"Connection error: {e}")
             return False
+
+    def reconnect(self) -> bool:
+        """Attempt to restore a lost MT5 connection using the last known-good credentials."""
+        if not self._last_login or not self._last_password or not self._last_server:
+            logger.error("Cannot reconnect — no previous successful connection to restore")
+            return False
+        logger.warning("Attempting MT5 reconnect after lost IPC connection...")
+        self.connected = False
+        return self.connect(self._last_login, self._last_password, self._last_server, path=self._last_path)
 
     def get_account_info(self) -> Dict:
         if not self.connected:
@@ -379,9 +396,17 @@ class MT5Bridge:
             info = self.get_symbol_info(symbol)
             visible = bool(info.get("visible", False)) if info else False
             if not selected or not info or not visible:
+                err = self._get_last_error_details()
                 logger.warning(
-                    f"Symbol selection check failed for {symbol}: selected={selected} visible={visible} info_exists={bool(info)} | last_error={self._get_last_error_details()['raw']}"
+                    f"Symbol selection check failed for {symbol}: selected={selected} visible={visible} info_exists={bool(info)} | last_error={err['raw']}"
                 )
+                if err["raw"] and err["raw"][0] == -10004:
+                    if self.reconnect():
+                        logger.warning(f"Reconnected — retrying symbol selection for {symbol}")
+                        selected = bool(self._call_mt5_with_timeout(select_symbol, timeout=10))
+                        info = self.get_symbol_info(symbol)
+                        visible = bool(info.get("visible", False)) if info else False
+                        return bool(selected and info and visible)
                 return False
             return True
         except Exception as e:
