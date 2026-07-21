@@ -1,0 +1,25 @@
+{
+  "model_name": "rf_USDNOK_5min",
+  "version": "20260721_100256",
+  "symbol": "USDNOK",
+  "timeframe": "5min",
+  "trained_at": "2026-07-21T10:02:56.448997",
+  "training_reason": "available_pairs_retrain",
+  "training_source": "verified_real_history",
+  "verified_real_history": true,
+  "history_path": "C:\\Users\\pc\\Desktop\\company projects\\fbs-ai-trader\\data\\USDNOK_5min_history.parquet",
+  "history_rows": 97707,
+  "history_date_range": {
+    "start": "2025-02-20 12:05:00",
+    "end": "2026-07-20 20:40:00"
+  },
+  "historical_samples": 97640,
+  "trade_outcome_rows_since_last_run": 14,
+  "validation": {
+    "current_model_accuracy": 0.49587961304192046,
+    "candidate_model_accuracy": 0.5130777499104263,
+    "mistake_accuracy_before": null,
+    "mistake_accuracy_after": null,
+    "promoted": true
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "model_name": "rf_EURAUD_1min",
+  "version": "20260721_040419",
+  "symbol": "EURAUD",
+  "timeframe": "1min",
+  "trained_at": "2026-07-21T04:04:19.119094",
+  "training_reason": "available_pairs_retrain",
+  "training_source": "verified_real_history",
+  "verified_real_history": true,
+  "history_path": "C:\\Users\\pc\\Desktop\\company projects\\fbs-ai-trader\\data\\EURAUD_1min_history.parquet",
+  "history_rows": 99820,
+  "history_date_range": {
+    "start": "2026-04-13 03:39:00",
+    "end": "2026-07-17 20:15:00"
+  },
+  "historical_samples": 99753,
+  "trade_outcome_rows_since_last_run": 14,
+  "validation": {
+    "current_model_accuracy": 0.5104464151510597,
+    "candidate_model_accuracy": 0.5119995991783155,
+    "mistake_accuracy_before": null,
+    "mistake_accuracy_after": null,
+    "promoted": true
+  }
+}

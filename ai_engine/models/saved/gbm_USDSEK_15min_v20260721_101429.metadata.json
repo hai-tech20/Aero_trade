@@ -1,0 +1,25 @@
+{
+  "model_name": "gbm_USDSEK_15min",
+  "version": "20260721_101429",
+  "symbol": "USDSEK",
+  "timeframe": "15min",
+  "trained_at": "2026-07-21T10:14:29.375059",
+  "training_reason": "available_pairs_retrain",
+  "training_source": "verified_real_history",
+  "verified_real_history": true,
+  "history_path": "C:\\Users\\pc\\Desktop\\company projects\\fbs-ai-trader\\data\\USDSEK_15min_history.parquet",
+  "history_rows": 99758,
+  "history_date_range": {
+    "start": "2022-04-29 01:00:00",
+    "end": "2026-07-20 20:45:00"
+  },
+  "historical_samples": 99691,
+  "trade_outcome_rows_since_last_run": 14,
+  "validation": {
+    "current_model_accuracy": 0.5034341003659698,
+    "candidate_model_accuracy": 0.5077956584950117,
+    "mistake_accuracy_before": null,
+    "mistake_accuracy_after": null,
+    "promoted": true
+  }
+}

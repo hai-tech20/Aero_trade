@@ -1,0 +1,25 @@
+{
+  "model_name": "gbm_GBPNZD_15min",
+  "version": "20260721_061619",
+  "symbol": "GBPNZD",
+  "timeframe": "15min",
+  "trained_at": "2026-07-21T06:16:19.586621",
+  "training_reason": "available_pairs_retrain",
+  "training_source": "verified_real_history",
+  "verified_real_history": true,
+  "history_path": "C:\\Users\\pc\\Desktop\\company projects\\fbs-ai-trader\\data\\GBPNZD_15min_history.parquet",
+  "history_rows": 100302,
+  "history_date_range": {
+    "start": "2022-06-29 00:00:00",
+    "end": "2026-07-17 19:45:00"
+  },
+  "historical_samples": 100235,
+  "trade_outcome_rows_since_last_run": 14,
+  "validation": {
+    "current_model_accuracy": 0.5016952532907858,
+    "candidate_model_accuracy": 0.5000498603909055,
+    "mistake_accuracy_before": null,
+    "mistake_accuracy_after": null,
+    "promoted": false
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "model_name": "rf_AUDJPY_1min",
+  "version": "20260721_062231",
+  "symbol": "AUDJPY",
+  "timeframe": "1min",
+  "trained_at": "2026-07-21T06:22:31.031076",
+  "training_reason": "available_pairs_retrain",
+  "training_source": "verified_real_history",
+  "verified_real_history": true,
+  "history_path": "C:\\Users\\pc\\Desktop\\company projects\\fbs-ai-trader\\data\\AUDJPY_1min_history.parquet",
+  "history_rows": 89436,
+  "history_date_range": {
+    "start": "2026-04-13 02:02:00",
+    "end": "2026-07-17 23:58:00"
+  },
+  "historical_samples": 89369,
+  "trade_outcome_rows_since_last_run": 14,
+  "validation": {
+    "current_model_accuracy": 0.5112117653637532,
+    "candidate_model_accuracy": 0.5159648828496337,
+    "mistake_accuracy_before": null,
+    "mistake_accuracy_after": null,
+    "promoted": true
+  }
+}

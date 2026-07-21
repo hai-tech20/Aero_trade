@@ -1,0 +1,25 @@
+{
+  "model_name": "gbm_CADCHF_15min",
+  "version": "20260721_093022",
+  "symbol": "CADCHF",
+  "timeframe": "15min",
+  "trained_at": "2026-07-21T09:30:22.512837",
+  "training_reason": "available_pairs_retrain",
+  "training_source": "verified_real_history",
+  "verified_real_history": true,
+  "history_path": "C:\\Users\\pc\\Desktop\\company projects\\fbs-ai-trader\\data\\CADCHF_15min_history.parquet",
+  "history_rows": 100194,
+  "history_date_range": {
+    "start": "2022-06-27 00:00:00",
+    "end": "2026-07-20 20:15:00"
+  },
+  "historical_samples": 100127,
+  "trade_outcome_rows_since_last_run": 14,
+  "validation": {
+    "current_model_accuracy": 0.5009983028850954,
+    "candidate_model_accuracy": 0.5325945891983628,
+    "mistake_accuracy_before": null,
+    "mistake_accuracy_after": null,
+    "promoted": true
+  }
+}

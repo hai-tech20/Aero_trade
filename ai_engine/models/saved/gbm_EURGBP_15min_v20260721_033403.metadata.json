@@ -1,0 +1,25 @@
+{
+  "model_name": "gbm_EURGBP_15min",
+  "version": "20260721_033403",
+  "symbol": "EURGBP",
+  "timeframe": "15min",
+  "trained_at": "2026-07-21T03:34:03.574511",
+  "training_reason": "available_pairs_retrain",
+  "training_source": "verified_real_history",
+  "verified_real_history": true,
+  "history_path": "C:\\Users\\pc\\Desktop\\company projects\\fbs-ai-trader\\data\\EURGBP_15min_history.parquet",
+  "history_rows": 100239,
+  "history_date_range": {
+    "start": "2022-07-06 00:00:00",
+    "end": "2026-07-17 19:15:00"
+  },
+  "historical_samples": 100172,
+  "trade_outcome_rows_since_last_run": 14,
+  "validation": {
+    "current_model_accuracy": 0.5095045651848525,
+    "candidate_model_accuracy": 0.5282143391707829,
+    "mistake_accuracy_before": null,
+    "mistake_accuracy_after": null,
+    "promoted": true
+  }
+}

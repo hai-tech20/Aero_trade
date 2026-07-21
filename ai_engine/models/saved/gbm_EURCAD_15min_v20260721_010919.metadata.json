@@ -1,0 +1,25 @@
+{
+  "model_name": "gbm_EURCAD_15min",
+  "version": "20260721_010919",
+  "symbol": "EURCAD",
+  "timeframe": "15min",
+  "trained_at": "2026-07-21T01:09:19.814490",
+  "training_reason": "available_pairs_retrain",
+  "training_source": "verified_real_history",
+  "verified_real_history": true,
+  "history_path": "C:\\Users\\pc\\Desktop\\company projects\\fbs-ai-trader\\data\\EURCAD_15min_history.parquet",
+  "history_rows": 100424,
+  "history_date_range": {
+    "start": "2022-07-04 00:00:00",
+    "end": "2026-07-17 18:15:00"
+  },
+  "historical_samples": 100357,
+  "trade_outcome_rows_since_last_run": 14,
+  "validation": {
+    "current_model_accuracy": 0.5126494023904382,
+    "candidate_model_accuracy": 0.5080179282868525,
+    "mistake_accuracy_before": null,
+    "mistake_accuracy_after": null,
+    "promoted": false
+  }
+}

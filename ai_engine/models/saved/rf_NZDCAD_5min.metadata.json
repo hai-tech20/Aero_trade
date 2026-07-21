@@ -1,0 +1,25 @@
+{
+  "model_name": "rf_NZDCAD_5min",
+  "version": "20260721_090857",
+  "symbol": "NZDCAD",
+  "timeframe": "5min",
+  "trained_at": "2026-07-21T09:08:57.301845",
+  "training_reason": "available_pairs_retrain",
+  "training_source": "verified_real_history",
+  "verified_real_history": true,
+  "history_path": "C:\\Users\\pc\\Desktop\\company projects\\fbs-ai-trader\\data\\NZDCAD_5min_history.parquet",
+  "history_rows": 98277,
+  "history_date_range": {
+    "start": "2025-03-13 00:00:00",
+    "end": "2026-07-20 20:20:00"
+  },
+  "historical_samples": 98210,
+  "trade_outcome_rows_since_last_run": 14,
+  "validation": {
+    "current_model_accuracy": 0.5112716910080912,
+    "candidate_model_accuracy": 0.521601954099028,
+    "mistake_accuracy_before": null,
+    "mistake_accuracy_after": null,
+    "promoted": true
+  }
+}

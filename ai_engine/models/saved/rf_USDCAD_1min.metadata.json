@@ -1,0 +1,25 @@
+{
+  "model_name": "rf_USDCAD_1min",
+  "version": "20260721_014514",
+  "symbol": "USDCAD",
+  "timeframe": "1min",
+  "trained_at": "2026-07-21T01:45:14.472322",
+  "training_reason": "available_pairs_retrain",
+  "training_source": "verified_real_history",
+  "verified_real_history": true,
+  "history_path": "C:\\Users\\pc\\Desktop\\company projects\\fbs-ai-trader\\data\\USDCAD_1min_history.parquet",
+  "history_rows": 98829,
+  "history_date_range": {
+    "start": "2026-04-10 19:18:00",
+    "end": "2026-07-17 02:17:00"
+  },
+  "historical_samples": 98762,
+  "trade_outcome_rows_since_last_run": 14,
+  "validation": {
+    "current_model_accuracy": 0.5048327513789788,
+    "candidate_model_accuracy": 0.5129801123424927,
+    "mistake_accuracy_before": null,
+    "mistake_accuracy_after": null,
+    "promoted": true
+  }
+}

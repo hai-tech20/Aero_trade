@@ -1,0 +1,25 @@
+{
+  "model_name": "gbm_GBPJPY_15min",
+  "version": "20260721_013734",
+  "symbol": "GBPJPY",
+  "timeframe": "15min",
+  "trained_at": "2026-07-21T01:37:34.273670",
+  "training_reason": "available_pairs_retrain",
+  "training_source": "verified_real_history",
+  "verified_real_history": true,
+  "history_path": "C:\\Users\\pc\\Desktop\\company projects\\fbs-ai-trader\\data\\GBPJPY_15min_history.parquet",
+  "history_rows": 99762,
+  "history_date_range": {
+    "start": "2022-07-01 00:00:00",
+    "end": "2026-07-17 23:45:00"
+  },
+  "historical_samples": 99695,
+  "trade_outcome_rows_since_last_run": 14,
+  "validation": {
+    "current_model_accuracy": 0.5012532584720273,
+    "candidate_model_accuracy": 0.5239623019851615,
+    "mistake_accuracy_before": null,
+    "mistake_accuracy_after": null,
+    "promoted": true
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "model_name": "rf_USDSGD_1min",
+  "version": "20260721_095024",
+  "symbol": "USDSGD",
+  "timeframe": "1min",
+  "trained_at": "2026-07-21T09:50:24.181197",
+  "training_reason": "available_pairs_retrain",
+  "training_source": "verified_real_history",
+  "verified_real_history": true,
+  "history_path": "C:\\Users\\pc\\Desktop\\company projects\\fbs-ai-trader\\data\\USDSGD_1min_history.parquet",
+  "history_rows": 87281,
+  "history_date_range": {
+    "start": "2026-04-09 05:11:00",
+    "end": "2026-07-16 22:41:00"
+  },
+  "historical_samples": 87214,
+  "trade_outcome_rows_since_last_run": 14,
+  "validation": {
+    "current_model_accuracy": 0.5073917029566812,
+    "candidate_model_accuracy": 0.5105432042172817,
+    "mistake_accuracy_before": null,
+    "mistake_accuracy_after": null,
+    "promoted": true
+  }
+}

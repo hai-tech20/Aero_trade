@@ -1,0 +1,25 @@
+{
+  "model_name": "rf_USDCHF_1min",
+  "version": "20260721_025416",
+  "symbol": "USDCHF",
+  "timeframe": "1min",
+  "trained_at": "2026-07-21T02:54:16.884909",
+  "training_reason": "available_pairs_retrain",
+  "training_source": "verified_real_history",
+  "verified_real_history": true,
+  "history_path": "C:\\Users\\pc\\Desktop\\company projects\\fbs-ai-trader\\data\\USDCHF_1min_history.parquet",
+  "history_rows": 98136,
+  "history_date_range": {
+    "start": "2026-04-10 21:31:00",
+    "end": "2026-07-16 14:58:00"
+  },
+  "historical_samples": 98069,
+  "trade_outcome_rows_since_last_run": 14,
+  "validation": {
+    "current_model_accuracy": 0.5082301381032462,
+    "candidate_model_accuracy": 0.5126637109514346,
+    "mistake_accuracy_before": null,
+    "mistake_accuracy_after": null,
+    "promoted": true
+  }
+}

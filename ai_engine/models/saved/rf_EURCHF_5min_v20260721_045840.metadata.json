@@ -1,0 +1,25 @@
+{
+  "model_name": "rf_EURCHF_5min",
+  "version": "20260721_045840",
+  "symbol": "EURCHF",
+  "timeframe": "5min",
+  "trained_at": "2026-07-21T04:58:40.827824",
+  "training_reason": "available_pairs_retrain",
+  "training_source": "verified_real_history",
+  "verified_real_history": true,
+  "history_path": "C:\\Users\\pc\\Desktop\\company projects\\fbs-ai-trader\\data\\EURCHF_5min_history.parquet",
+  "history_rows": 98924,
+  "history_date_range": {
+    "start": "2025-03-10 00:00:00",
+    "end": "2026-07-17 23:55:00"
+  },
+  "historical_samples": 98857,
+  "trade_outcome_rows_since_last_run": 14,
+  "validation": {
+    "current_model_accuracy": 0.5026794742163802,
+    "candidate_model_accuracy": 0.5230030333670375,
+    "mistake_accuracy_before": null,
+    "mistake_accuracy_after": null,
+    "promoted": true
+  }
+}

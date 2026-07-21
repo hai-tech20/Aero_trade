@@ -1,0 +1,25 @@
+{
+  "model_name": "rf_NZDUSD_1min",
+  "version": "20260721_023310",
+  "symbol": "NZDUSD",
+  "timeframe": "1min",
+  "trained_at": "2026-07-21T02:33:10.354321",
+  "training_reason": "available_pairs_retrain",
+  "training_source": "verified_real_history",
+  "verified_real_history": true,
+  "history_path": "C:\\Users\\pc\\Desktop\\company projects\\fbs-ai-trader\\data\\NZDUSD_1min_history.parquet",
+  "history_rows": 99820,
+  "history_date_range": {
+    "start": "2026-04-10 23:05:00",
+    "end": "2026-07-17 19:59:00"
+  },
+  "historical_samples": 99753,
+  "trade_outcome_rows_since_last_run": 14,
+  "validation": {
+    "current_model_accuracy": 0.5125507289944387,
+    "candidate_model_accuracy": 0.515707199759507,
+    "mistake_accuracy_before": null,
+    "mistake_accuracy_after": null,
+    "promoted": true
+  }
+}

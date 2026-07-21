@@ -1,0 +1,25 @@
+{
+  "model_name": "rf_USDMXN_5min",
+  "version": "20260721_094436",
+  "symbol": "USDMXN",
+  "timeframe": "5min",
+  "trained_at": "2026-07-21T09:44:36.825711",
+  "training_reason": "available_pairs_retrain",
+  "training_source": "verified_real_history",
+  "verified_real_history": true,
+  "history_path": "C:\\Users\\pc\\Desktop\\company projects\\fbs-ai-trader\\data\\USDMXN_5min_history.parquet",
+  "history_rows": 97732,
+  "history_date_range": {
+    "start": "2025-02-25 06:20:00",
+    "end": "2026-07-20 20:35:00"
+  },
+  "historical_samples": 97665,
+  "trade_outcome_rows_since_last_run": 14,
+  "validation": {
+    "current_model_accuracy": 0.49723672090881177,
+    "candidate_model_accuracy": 0.5067546822229045,
+    "mistake_accuracy_before": null,
+    "mistake_accuracy_after": null,
+    "promoted": true
+  }
+}
