@@ -92,7 +92,21 @@ class RiskManager:
         pip_value = get_tick_value_from_broker(symbol_info or {}, default=10.0)
 
         position_size = risk_amount / max(stop_loss_pips, 1) / pip_value
-        return round(max(position_size, 0.01), 2)
+
+        # Round/clamp to the broker's REAL per-symbol volume rules, not a hardcoded 0.01 —
+        # different symbols require different minimums and step sizes (e.g. 0.1 instead of
+        # 0.01), and sending a size that isn't an exact multiple of the real step gets
+        # rejected as "Invalid volume" even if it looked fine by a generic assumption.
+        info = symbol_info or {}
+        vol_min = float(info.get("volume_min") or 0.01)
+        vol_max = float(info.get("volume_max") or 100.0)
+        vol_step = float(info.get("volume_step") or 0.01)
+
+        if vol_step > 0:
+            position_size = round(position_size / vol_step) * vol_step
+        position_size = max(vol_min, min(position_size, vol_max))
+        decimals = len(str(vol_step).split(".")[-1]) if "." in str(vol_step) else 2
+        return round(position_size, decimals)
 
     def calculate_position_size(
         self,

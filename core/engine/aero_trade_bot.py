@@ -16,6 +16,7 @@ sys.path.append(str(Path(__file__).parent))
 
 from ai_engine.models.predictor import HybridAIPredictor
 from ai_engine.models.model_keys import make_model_key
+from core.analysis.macro_bias import get_macro_bias
 from ai_engine.training.model_status import get_best_timeframe_for_symbol
 from core.sessions import is_favorable_session
 from decision_maker.signal_fusion import SignalFusion, Signal, SignalSource, FusedSignal
@@ -235,7 +236,13 @@ class AeroTradeBot:
         if df_5min is None:
             self._log_activity(symbol, "analyzed — missing 5min context — skipped")
             return
-        sniper_signal = sniper_logic.get_sniper_signal(symbol, df_1min, df_5min)
+        df_1h = None
+        df_4h = None
+        if self.mt5_bridge:
+            df_1h = self.mt5_bridge.get_historical_data(symbol, "1h", count=200)
+            df_4h = self.mt5_bridge.get_historical_data(symbol, "4h", count=200)
+        macro = get_macro_bias(symbol, df_1h, df_4h)
+        sniper_signal = sniper_logic.get_sniper_signal(symbol, df_1min, df_5min, macro_bias=macro["bias"])
         if sniper_signal["direction"] is None:
             self._log_activity(symbol, "analyzed — no price-action signal — skipped")
             return

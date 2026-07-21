@@ -449,7 +449,7 @@ class SniperLogic:
                         old_ob.broken = True
     
     def get_sniper_signal(self, symbol: str, df_1min: pd.DataFrame, 
-                         df_5min: pd.DataFrame) -> Dict:
+                         df_5min: pd.DataFrame, macro_bias: Optional[str] = None) -> Dict:
         """
         Get comprehensive sniper entry signal
         Combines liquidity sweeps, order blocks, and CHoCH
@@ -518,6 +518,18 @@ class SniperLogic:
                     signal['direction'] = 'SELL'
                     signal['confidence'] += 0.4
             
+            # Apply macro (1H/4H) bias as a soft top-down filter — boosts confidence when
+            # the lower-timeframe signal agrees with the bigger picture, reduces it when it
+            # doesn't. This is soft (not a hard block) so symbols without HTF data yet keep
+            # trading exactly as before.
+            if macro_bias in ("bullish", "bearish") and signal['direction']:
+                signal_dir_bullish = signal['direction'] == 'BUY'
+                bias_bullish = macro_bias == "bullish"
+                if signal_dir_bullish == bias_bullish:
+                    signal['confidence'] = min(1.0, signal['confidence'] * 1.15)
+                else:
+                    signal['confidence'] = signal['confidence'] * 0.5
+
             # Build reason string
             reasons = []
             if sweep:

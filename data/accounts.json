@@ -263,6 +263,50 @@
       "aggressive_mode": false,
       "enabled_pairs": [],
       "settings": {}
+    },
+    "6b9fa055-4a4c-46fd-bc9f-90a665d8bc9c": {
+      "broker_id": "custom",
+      "login": 436937197,
+      "server": "Exness-MT5Trial9",
+      "is_demo": true,
+      "display_name": "Other (enter server manually)",
+      "live_trading_enabled": false,
+      "aggressive_mode": false,
+      "enabled_pairs": [],
+      "settings": {}
+    },
+    "3515a55a-b58a-4fb4-8764-a5e3404770f9": {
+      "broker_id": "custom",
+      "login": 436937197,
+      "server": "Exness-MT5Trial9",
+      "is_demo": true,
+      "display_name": "Other (enter server manually)",
+      "live_trading_enabled": false,
+      "aggressive_mode": false,
+      "enabled_pairs": [],
+      "settings": {}
+    },
+    "fb67c329-6b59-4688-a464-eab24b455ea8": {
+      "broker_id": "custom",
+      "login": 436937197,
+      "server": "Exness-MT5Trial9",
+      "is_demo": true,
+      "display_name": "Other (enter server manually)",
+      "live_trading_enabled": false,
+      "aggressive_mode": false,
+      "enabled_pairs": [],
+      "settings": {}
+    },
+    "de0a0e7a-f97e-41f6-a94f-4b0143c27a1b": {
+      "broker_id": "fbs",
+      "login": 102790591,
+      "server": "FBS-Demo",
+      "is_demo": true,
+      "display_name": "FBS",
+      "live_trading_enabled": false,
+      "aggressive_mode": false,
+      "enabled_pairs": [],
+      "settings": {}
     }
   }
 }

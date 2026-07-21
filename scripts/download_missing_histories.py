@@ -10,7 +10,7 @@ from core.broker.credential_store import list_accounts, load_broker_credentials
 from core.broker.mt5_broker_client import MT5BrokerClient
 from data.history_downloader import download_full_history
 
-TIMEFRAMES = ["1min", "5min", "15min"]
+TIMEFRAMES = ["1min", "5min", "15min", "1h", "4h"]
 
 
 def needs_download(symbol: str, timeframe: str) -> bool:
