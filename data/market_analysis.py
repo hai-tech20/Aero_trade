@@ -244,19 +244,29 @@ class MarketAnalysis:
 
     async def get_market_sentiment(self, symbol: str) -> Dict:
         """
-        Sentiment from Alpha Vantage ONLY (primary/only directional source).
-        Finnhub is only used for article_count (news volume, not sentiment).
+        Sentiment from Marketaux (primary) + Alpha Vantage (secondary).
+        Finnhub provides article_count only (news volume flag, not directional sentiment).
         """
         finnhub = self.get_symbol_news_sentiment(symbol)
         av = self.get_alpha_vantage_sentiment(symbol)
 
-        # Use only Alpha Vantage for sentiment; Finnhub article count is for volume only
-        bullish = av["bullish"]
-        bearish = av["bearish"]
-        confidence = av["confidence"]
+        # Marketaux — higher free quota than Alpha Vantage
+        marketaux_sent = {"bullish": 0.5, "bearish": 0.5, "confidence": 0.0}
+        try:
+            from data.marketaux_source import get_symbol_sentiment as marketaux_sentiment
+            marketaux_sent = marketaux_sentiment(symbol)
+        except Exception as e:
+            logger.warning(f"Marketaux sentiment unavailable for {symbol}: {e}")
+
+        # Weight: Marketaux 50%, Alpha Vantage 50% for direction
+        bullish = marketaux_sent["bullish"] * 0.5 + av["bullish"] * 0.5
+        bearish = marketaux_sent["bearish"] * 0.5 + av["bearish"] * 0.5
+        confidence = max(marketaux_sent["confidence"], av["confidence"] * 0.8)
+        article_count = finnhub.get("article_count", 0) + marketaux_sent.get("article_count", 0)
 
         logger.info(
-            f"[MARKET ANALYSIS] Sentiment for {symbol}: bullish={bullish:.2f}, bearish={bearish:.2f}, confidence={confidence:.2f}, articles={finnhub.get('article_count',0)}"
+            f"[MARKET ANALYSIS] Sentiment for {symbol}: bullish={bullish:.2f}, bearish={bearish:.2f}, "
+            f"confidence={confidence:.2f}, articles={article_count} (Marketaux+Finnhub volume)"
         )
 
         return {
@@ -265,7 +275,7 @@ class MarketAnalysis:
             "bearish": bearish,
             "neutral": max(0, 1.0 - bullish - bearish),
             "confidence": confidence,
-            "article_count": finnhub.get("article_count", 0),
+            "article_count": article_count,
             "timestamp": datetime.now().timestamp(),
         }
 

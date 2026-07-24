@@ -26,11 +26,16 @@ from core.strategies.sniper_logic import sniper_logic
 from core.risk_management.risk_manager import risk_manager
 from core.ledger.trade_ledger import (
     init_ledger, record_open_trade, record_close_trade, resolve_orphan_trade,
+    build_self_analysis,
 )
+from core.ledger.close_attribution import classify_close, TRAINABLE_CLOSED_BY
 from core.symbols import symbol_asset_class, price_distance_to_pips, get_tick_value_from_broker
 from data.market_data import MarketDataFeed
 from data.market_analysis import market_analysis
 from data.binance_data import check_btc_divergence
+from data.vix_source import is_high_volatility_regime
+from data.fred_source import is_rates_rising
+from data.cot_source import get_latest_cot_positioning
 from utils.logger import TradingLogger
 from config.settings import (
     APP_NAME, TRADING_CONFIG, RISK_CONFIG, AI_CONFIG, SIGNAL_FUSION_CONFIG,
@@ -59,6 +64,15 @@ class AeroTradeBot:
         self.live_trading_enabled = False
         self._log_callbacks: List = []
         self.activity_log: List[Dict] = []
+        self._last_slot_log_time: float = 0.0
+        self._last_slot_count: int = -1
+        self._last_self_analysis_time: float = 0.0
+        self._open_orders_cache: List[Dict] = []
+        self._floating_pnl: float = 0.0
+        self._floating_pnl_pct: float = 0.0
+        self._open_win_count: int = 0
+        self._open_loss_count: int = 0
+        self._opposing_signal_counts: Dict[str, int] = {}
 
     def on_log(self, callback):
         self._log_callbacks.append(callback)
@@ -77,8 +91,8 @@ class AeroTradeBot:
             "message": message,
         }
         self.activity_log.append(entry)
-        if len(self.activity_log) > 500:
-            self.activity_log = self.activity_log[-500:]
+        if len(self.activity_log) > 5000:
+            self.activity_log = self.activity_log[-5000:]
 
     def get_activity(self, limit: int = 50) -> List[Dict]:
         return self.activity_log[-limit:]
@@ -90,9 +104,15 @@ class AeroTradeBot:
         await self.ai_predictor.start_retraining_scheduler()
 
         if creds:
-            await self.broker.connect_with_credentials(creds)
+            connected = await self.broker.connect_with_credentials(creds)
         else:
-            await self.broker.connect(demo=True)
+            connected = await self.broker.connect(demo=True)
+
+        if not connected:
+            raise RuntimeError(
+                f"Could not establish a real MT5 connection for account {self.account_id} — "
+                "refusing to start the bot with no live broker connection."
+            )
 
         try:
             meta = get_account_meta(self.account_id)
@@ -144,6 +164,54 @@ class AeroTradeBot:
         finally:
             await self.shutdown()
 
+    def get_floating_stats(self) -> Dict[str, Any]:
+        return {
+            "floating_pnl": self._floating_pnl,
+            "floating_pnl_pct": self._floating_pnl_pct,
+            "open_win_count": self._open_win_count,
+            "open_loss_count": self._open_loss_count,
+            "open_positions_count": len(self._open_orders_cache),
+        }
+
+    def _compute_floating_stats(self, open_orders: List[Dict]):
+        balance = max(self.account_info.get("balance", 1), 1)
+        self._floating_pnl = sum(float(o.get("profit", 0) or o.get("pnl_usd", 0)) for o in open_orders)
+        self._floating_pnl_pct = (self._floating_pnl / balance) * 100
+        self._open_win_count = sum(1 for o in open_orders if float(o.get("profit", 0) or 0) > 0)
+        self._open_loss_count = sum(1 for o in open_orders if float(o.get("profit", 0) or 0) < 0)
+        self._open_orders_cache = open_orders
+
+    def _log_slot_summary(self, open_count: int):
+        import time
+        max_pos = TRADING_CONFIG.get("max_positions", 18)
+        now = time.time()
+        available = max_pos - open_count
+        if open_count != self._last_slot_count or (now - self._last_slot_log_time) >= 60:
+            self._log_activity("-", f"Position slots: {open_count}/{max_pos} used — {available} available")
+            self._last_slot_count = open_count
+            self._last_slot_log_time = now
+
+    async def _maybe_log_self_analysis(self):
+        import time
+        now = time.time()
+        if now - self._last_self_analysis_time < 14400:  # every 4 hours
+            return
+        try:
+            report = build_self_analysis(self.account_id, days=30)
+            overall = report.get("overall", {})
+            self._log_activity(
+                "-",
+                f"Self-analysis: {overall.get('total_trades', 0)} trades, "
+                f"win rate {overall.get('win_rate', 0)*100:.1f}%, "
+                f"P&L ${overall.get('pnl_usd', 0):.2f}, "
+                f"flags: {len(report.get('flags', []))}",
+            )
+            for flag in report.get("flags", [])[:3]:
+                self._log_activity("-", f"Analysis flag: {flag}")
+            self._last_self_analysis_time = now
+        except Exception as e:
+            self.logger.warning(f"Self-analysis log failed: {e}")
+
     async def trading_iteration(self):
         try:
             stop, reason = risk_manager.should_stop_trading(
@@ -156,12 +224,15 @@ class AeroTradeBot:
                 self._log_activity("-", f"cycle aborted — {reason}")
                 return
 
-            if len(self.active_positions) >= TRADING_CONFIG.get("max_positions", 10):
-                await self.monitor_positions()
-                self._log_activity("-", f"cycle skipped — max positions reached ({len(self.active_positions)})")
-                return
+            # Always monitor first — never skip symbol analysis due to position cap
+            await self.monitor_positions()
 
             self.account_info = await self.broker.get_account_info()
+            open_orders = await self.broker.get_open_orders()
+            self._compute_floating_stats(open_orders)
+            broker_count = len(open_orders)
+            self._log_slot_summary(broker_count)
+
             if self.broker.use_mt5 and self.broker.mt5_bridge and not self.broker.mt5_bridge.connected:
                 self.logger.warning("MT5 connection lost — attempting reconnect")
                 try:
@@ -170,6 +241,7 @@ class AeroTradeBot:
                     await self.broker.connect_with_credentials(creds)
                 except Exception as e:
                     self.logger.error(f"MT5 reconnect failed: {e}")
+
             symbols_analyzed = 0
             for symbol in self.available_symbols[:TRADING_CONFIG.get("max_symbols", 50)]:
                 try:
@@ -178,8 +250,15 @@ class AeroTradeBot:
                 except Exception as e:
                     self.logger.error(f"Error processing {symbol}: {e}")
                     self._log_activity(symbol, f"error — {e}")
+
             await self.monitor_positions()
-            self._log_activity("-", f"cycle complete — {symbols_analyzed} symbols analyzed — next cycle in {1 if TRADING_CONFIG.get('scalping_enabled') else 5}s")
+            await self._maybe_log_self_analysis()
+            self._log_activity(
+                "-",
+                f"cycle complete — {symbols_analyzed} symbols analyzed — "
+                f"floating P&L ${self._floating_pnl:.2f} ({self._floating_pnl_pct:.1f}%) — "
+                f"next cycle in {1 if TRADING_CONFIG.get('scalping_enabled') else 5}s",
+            )
         except Exception as e:
             self.logger.error(f"Iteration error: {e}")
             self._log_activity("-", f"cycle error — {e}")
@@ -299,7 +378,9 @@ class AeroTradeBot:
             return
 
         if any(p.get("symbol") == symbol for p in self.active_positions):
-            self._log_activity(symbol, f"analyzed — fused confidence {fused.confidence:.2f} — signal: {fused.action} — already in position — skipped")
+            existing = next(p for p in self.active_positions if p.get("symbol") == symbol)
+            await self._maybe_early_close(symbol, existing, fused, market_bias)
+            self._log_activity(symbol, f"analyzed — fused confidence {fused.confidence:.2f} — signal: {fused.action} — already in position — skipped new entry")
             return
 
         sentiment_agrees = (
@@ -317,7 +398,60 @@ class AeroTradeBot:
             self.logger.warning(f"ADX check failed for {symbol}: {e}")
 
         self._log_activity(symbol, f"analyzed — fused signal {fused.action} @ {fused.confidence:.2f}")
-        await self.execute_trade(fused, symbol, df_1min, market_bias, sniper_signal, sentiment_agrees)
+        await self.execute_trade(
+            fused, symbol, df_1min, market_bias, sniper_signal, sentiment_agrees,
+            active_timeframe=active_timeframe,
+        )
+
+    async def _maybe_early_close(
+        self,
+        symbol: str,
+        position: Dict,
+        fused: FusedSignal,
+        market_bias: Dict,
+    ):
+        """Conservative early-close: opt-in, requires sustained opposing signal."""
+        if not RISK_CONFIG.get("allow_early_close", False):
+            return
+
+        pos_dir = position.get("direction", "")
+        opposing = (
+            (pos_dir == "BUY" and fused.action == "SELL") or
+            (pos_dir == "SELL" and fused.action == "BUY")
+        )
+        min_conf = RISK_CONFIG.get("early_close_min_confidence", 0.65)
+        confirm_cycles = RISK_CONFIG.get("early_close_confirm_cycles", 2)
+
+        if opposing and fused.confidence >= min_conf:
+            key = f"{symbol}:{position.get('order_id')}"
+            self._opposing_signal_counts[key] = self._opposing_signal_counts.get(key, 0) + 1
+        else:
+            key = f"{symbol}:{position.get('order_id')}"
+            self._opposing_signal_counts[key] = 0
+            return
+
+        if self._opposing_signal_counts[key] < confirm_cycles:
+            self._log_activity(
+                symbol,
+                f"early-close watch — opposing {fused.action} @ {fused.confidence:.2f} "
+                f"({self._opposing_signal_counts[key]}/{confirm_cycles} cycles)",
+            )
+            return
+
+        reason = (
+            f"fused signal reversed to {fused.action} @ {fused.confidence:.2f} confidence, "
+            f"closing early after {confirm_cycles} consecutive opposing cycles"
+        )
+        self._log_activity(symbol, f"EARLY CLOSE triggered — {reason}")
+        order_id = position.get("order_id")
+        result = await self.broker.close_order(order_id)
+        if result.get("success"):
+            position["bot_initiated_close"] = True
+            position["close_reason"] = reason
+            self._opposing_signal_counts.pop(key, None)
+            self.logger.info(f"Early close executed for {symbol} #{order_id}")
+        else:
+            self._log_activity(symbol, f"early close FAILED — {result.get('error')}")
 
     async def get_technical_signal(self, market_data_df: pd.DataFrame, market_analysis_result: Dict[str, Any] | None = None) -> Dict[str, Any]:
         import numpy as np
@@ -347,9 +481,20 @@ class AeroTradeBot:
         market_analysis_result: Dict[str, Any] | None = None,
         sniper_signal: Dict[str, Any] | None = None,
         sentiment_agrees: bool = True,
+        active_timeframe: str = "5min",
     ):
         min_conf = AI_CONFIG.get("min_confidence", 0.55)
         if decision.confidence < min_conf:
+            return
+
+        # Real-time slot check immediately before placement (mid-cycle freeing)
+        open_orders = await self.broker.get_open_orders()
+        max_pos = TRADING_CONFIG.get("max_positions", 18)
+        if len(open_orders) >= max_pos:
+            self._log_activity(
+                symbol,
+                f"slot check — {len(open_orders)}/{max_pos} positions open — skipping order",
+            )
             return
 
         balance = self.account_info.get("balance", 0)
@@ -386,7 +531,15 @@ class AeroTradeBot:
 
         position_size = risk_manager.calculate_dynamic_position_size(
             balance, sl_pips, decision.confidence, sentiment_agrees, symbol, symbol_info,
+            floating_pnl=self._floating_pnl,
+            floating_pnl_pct=self._floating_pnl_pct,
         )
+        if self._floating_pnl_pct < -RISK_CONFIG.get("floating_loss_threshold_pct", 2.0):
+            self._log_activity(
+                symbol,
+                f"reducing position size by {RISK_CONFIG.get('floating_loss_size_reduction_pct', 25):.0f}% — "
+                f"currently sitting on unrealized losses ({self._floating_pnl_pct:.1f}% floating)",
+            )
         
         # Slightly reduce position size if there's divergence or high news volume
         if has_divergence:
@@ -395,6 +548,56 @@ class AeroTradeBot:
         if has_high_news_volume:
             position_size = position_size * 0.8  # 20% reduction for high news volume
             self._log_activity(symbol, "reducing position size by 20% due to high news volume")
+
+        # VIX regime check — reduce size during elevated market-wide volatility
+        try:
+            if is_high_volatility_regime(threshold=25.0):
+                position_size = position_size * 0.7
+                self._log_activity(symbol, "reducing position size by 30% due to high VIX (elevated market volatility)")
+        except Exception as e:
+            self.logger.warning(f"VIX check failed for {symbol}: {e}")
+
+        # FRED rate-trend check — bias against long AUD/NZD when US rates are climbing
+        try:
+            base_currency = symbol[:3].upper()
+            if base_currency in ("AUD", "NZD") and decision.action == "BUY":
+                if is_rates_rising("FEDFUNDS"):
+                    position_size = position_size * 0.7
+                    self._log_activity(symbol, "reducing position size by 30% — rising US rates typically pressure commodity currencies")
+        except Exception as e:
+            self.logger.warning(f"FRED rate check failed for {symbol}: {e}")
+
+        # COT institutional positioning — adjust size based on agreement with fused signal
+        try:
+            cot_currency_map = {
+                "EUR": "EURO FX", "GBP": "BRITISH POUND", "JPY": "JAPANESE YEN",
+                "AUD": "AUSTRALIAN DOLLAR", "NZD": "NEW ZEALAND DOLLAR",
+                "CAD": "CANADIAN DOLLAR", "CHF": "SWISS FRANC",
+            }
+            base_currency = symbol[:3].upper()
+            cot_name = cot_currency_map.get(base_currency)
+            if cot_name:
+                cot_data = get_latest_cot_positioning(cot_name)
+                if cot_data:
+                    cot_bullish = cot_data["bias"] == "bullish"
+                    signal_bullish = decision.action == "BUY"
+                    if cot_bullish == signal_bullish:
+                        position_size = position_size * 1.1
+                        self._log_activity(symbol, f"COT positioning agrees ({cot_data['bias']}) — slightly increasing size")
+                    else:
+                        position_size = position_size * 0.85
+                        self._log_activity(symbol, f"COT positioning disagrees ({cot_data['bias']}) — reducing size")
+        except Exception as e:
+            self.logger.warning(f"COT check failed for {symbol}: {e}")
+
+        # Re-align to the broker's real volume step after ALL reductions above — multiplying
+        # by any of these factors can produce a size that's no longer a valid step multiple,
+        # which was causing "Invalid volume" rejections even after the initial sizing was fixed.
+        vol_step = float(symbol_info.get("volume_step") or 0.01)
+        if vol_step > 0:
+            position_size = round(position_size / vol_step) * vol_step
+            decimals = len(str(vol_step).split(".")[-1]) if "." in str(vol_step) else 2
+            position_size = round(position_size, decimals)
 
         volume_min = symbol_info.get("volume_min", 0.01)
 
@@ -451,11 +654,17 @@ class AeroTradeBot:
             except Exception:
                 pass
 
+            sl_price = tp_price = 0.0
+            if sniper_signal:
+                sl_price = float(sniper_signal.get("stop_loss") or 0)
+                tp_price = float(sniper_signal.get("take_profit") or 0)
+
             record_open_trade(
                 order_id, self.account_id, symbol, order_type,
                 order_result.get("price", current_price), position_size,
                 decision.confidence, features_json, sentiment_agrees,
                 decision.details.get("model", "fusion"),
+                timeframe=active_timeframe,
             )
             self.active_positions.append({
                 "order_id": order_id,
@@ -465,6 +674,9 @@ class AeroTradeBot:
                 "size": position_size,
                 "confidence": decision.confidence,
                 "features_json": features_json,
+                "timeframe": active_timeframe,
+                "stop_loss": sl_price,
+                "take_profit": tp_price,
             })
             self._log_activity(symbol, f"order placed — {order_type} {position_size:.2f} lots #{order_id}")
             self.logger.success(f"Order placed: {order_type} {symbol} #{order_id}")
@@ -473,61 +685,116 @@ class AeroTradeBot:
             self.logger.error(f"Order failed: {order_result.get('error')}")
 
     async def monitor_positions(self):
-        if not self.active_positions:
-            return
         open_orders = await self.broker.get_open_orders()
         broker_ids = {str(o.get("order_id")) for o in open_orders}
+        local_ids = [str(p.get("order_id")) for p in self.active_positions]
+
+        self.logger.debug(
+            f"monitor_positions check: local={len(self.active_positions)} "
+            f"broker={len(open_orders)} local_ids={local_ids} "
+            f"broker_ids={sorted(broker_ids)}"
+        )
+
+        # Update floating profit on still-open positions
+        broker_map = {str(o.get("order_id")): o for o in open_orders}
+        for pos in self.active_positions:
+            oid = str(pos.get("order_id"))
+            if oid in broker_map:
+                pos["floating_pnl"] = float(broker_map[oid].get("profit", 0) or 0)
+                pos["stop_loss"] = pos.get("stop_loss") or broker_map[oid].get("stop_loss", 0)
+                pos["take_profit"] = pos.get("take_profit") or broker_map[oid].get("take_profit", 0)
+
+        if not self.active_positions and not open_orders:
+            return
 
         for position in self.active_positions[:]:
-            order_id = str(position.get("order_id"))
-            if order_id not in broker_ids:
+            try:
+                order_id = str(position.get("order_id"))
+                if order_id in broker_ids:
+                    continue
+
                 pnl = 0.0
                 exit_price = position.get("entry_price", 0)
-                history = await self.broker.get_order_history(limit=200)
-                closed = next((o for o in history if str(o.get("order_id")) == order_id), None)
+                bot_initiated = position.pop("bot_initiated_close", False)
+                preset_reason = position.pop("close_reason", "")
+
+                closed = await self.broker.get_close_deal(int(order_id))
+                if not closed:
+                    history = await self.broker.get_order_history(limit=500)
+                    closed = next((o for o in history if str(o.get("order_id")) == order_id), None)
+
                 if closed:
                     pnl = closed.get("pnl_usd", 0) or closed.get("profit", 0)
                     exit_price = closed.get("price", exit_price)
+                    if preset_reason:
+                        closed["close_reason"] = preset_reason
                 else:
-                    self.logger.warning(f"Position {order_id} closed — resolving via ledger")
+                    self.logger.warning(f"Position {order_id} closed — no deal history found")
+
+                closed_by, close_reason = classify_close(
+                    position, closed or {},
+                    sl_price=float(position.get("stop_loss", 0) or 0),
+                    tp_price=float(position.get("take_profit", 0) or 0),
+                    bot_initiated=bot_initiated,
+                )
+
+                outcome = record_close_trade(
+                    order_id, exit_price, pnl, position.get("confidence", 0),
+                    closed_by=closed_by, close_reason=close_reason,
+                )
+                if not closed:
+                    # Ensure orphan is recorded even if open trade row was missing
                     resolve_orphan_trade(
                         order_id, self.account_id, position.get("symbol", ""),
                         position.get("direction", ""), position.get("entry_price", 0),
                         position.get("size", 0), pnl,
+                        closed_by=closed_by, close_reason=close_reason,
                     )
+                self._log_activity(
+                    position.get("symbol", "?"),
+                    f"position closed — {outcome} ${pnl:.2f} — closed_by={closed_by} — {close_reason}",
+                )
 
-                outcome = record_close_trade(order_id, exit_price, pnl, position.get("confidence", 0))
                 if pnl > 0:
                     self.win_streak += 1
                 else:
                     self.win_streak = 0
 
-                # Online learning from outcome
-                actual_dir = 1 if pnl > 0 else 0
-                try:
-                    sym = position.get("symbol", "EURUSD")
-                    df = await self.market_data.get_latest_data(sym, "5min", lookback=50)
-                    if df is not None:
-                        await self.ai_predictor.update_with_new_data(
-                            df,
-                            actual_dir,
-                            "5min",
-                            trade_sample={
-                                "order_id": order_id,
-                                "symbol": sym,
-                                "features": json.loads(position.get("features_json", "[]") or "[]") if position.get("features_json") else [],
-                                "label": int(actual_dir),
-                                "timeframe": "5min",
-                                "recorded_at": datetime.now().isoformat(),
-                            },
-                        )
-                except Exception:
-                    pass
+                # Online learning — exclude user manual closes
+                if closed_by in TRAINABLE_CLOSED_BY:
+                    actual_dir = 1 if pnl > 0 else 0
+                    try:
+                        sym = position.get("symbol", "EURUSD")
+                        tf = position.get("timeframe", "5min")
+                        df = await self.market_data.get_latest_data(sym, tf, lookback=50)
+                        if df is not None:
+                            await self.ai_predictor.update_with_new_data(
+                                df, actual_dir, tf,
+                                trade_sample={
+                                    "order_id": order_id,
+                                    "symbol": sym,
+                                    "features": json.loads(position.get("features_json", "[]") or "[]") if position.get("features_json") else [],
+                                    "label": int(actual_dir),
+                                    "timeframe": tf,
+                                    "recorded_at": datetime.now().isoformat(),
+                                    "closed_by": closed_by,
+                                },
+                            )
+                    except Exception as learn_err:
+                        self.logger.warning(f"Online learning skipped for {order_id}: {learn_err}")
+                else:
+                    self.logger.info(
+                        f"Trade {order_id} excluded from training — closed_by={closed_by}"
+                    )
 
                 risk_manager.record_trade({"pnl": pnl, "symbol": position.get("symbol")})
-                self.logger.info(f"Position {order_id} closed: {outcome} P&L=${pnl:.2f}")
+                self.logger.info(f"Position {order_id} closed: {outcome} P&L=${pnl:.2f} [{closed_by}]")
                 self.active_positions.remove(position)
-
+            except Exception as e:
+                self.logger.error(
+                    f"Error resolving closed position {position.get('order_id')}: {e} — will retry next cycle"
+                )
+    
     async def close_position(self, position: dict):
         order_id = position.get("order_id")
         if order_id:

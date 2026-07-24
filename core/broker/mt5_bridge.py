@@ -316,16 +316,64 @@ class MT5Bridge:
                 dd = d._asdict()
                 result.append({
                     "order_id": dd.get("position_id", dd.get("ticket")),
+                    "ticket": dd.get("ticket"),
+                    "position_id": dd.get("position_id"),
                     "symbol": dd.get("symbol"),
                     "pnl_usd": dd.get("profit", 0),
                     "profit": dd.get("profit", 0),
                     "volume": dd.get("volume"),
+                    "price": dd.get("price"),
                     "time": dd.get("time"),
+                    "reason": dd.get("reason"),
+                    "comment": dd.get("comment", ""),
+                    "entry": dd.get("entry"),  # DEAL_ENTRY_IN=0, DEAL_ENTRY_OUT=1
+                    "type": dd.get("type"),
                 })
             return result
         except Exception as e:
             logger.error(f"Error getting deal history: {e}")
             return []
+
+    def get_close_deal_for_position(self, position_id: int) -> Dict:
+        """Find the closing (OUT) deal for a position ticket."""
+        try:
+            from datetime import timedelta
+            def get_deals():
+                return mt5_api.history_deals_get(datetime.now() - timedelta(days=30), datetime.now())
+            deals = self._call_mt5_with_timeout(get_deals, timeout=15)
+            if not deals:
+                return {}
+            # Prefer OUT deals matching position_id
+            out_deals = [
+                d._asdict() for d in deals
+                if d._asdict().get("position_id") == position_id and d._asdict().get("entry") == 1
+            ]
+            if out_deals:
+                dd = out_deals[-1]
+                return {
+                    "order_id": dd.get("position_id", dd.get("ticket")),
+                    "pnl_usd": dd.get("profit", 0),
+                    "profit": dd.get("profit", 0),
+                    "price": dd.get("price"),
+                    "reason": dd.get("reason"),
+                    "comment": dd.get("comment", ""),
+                }
+            # Fallback: any deal with matching position_id
+            for d in reversed(deals):
+                dd = d._asdict()
+                if dd.get("position_id") == position_id:
+                    return {
+                        "order_id": dd.get("position_id"),
+                        "pnl_usd": dd.get("profit", 0),
+                        "profit": dd.get("profit", 0),
+                        "price": dd.get("price"),
+                        "reason": dd.get("reason"),
+                        "comment": dd.get("comment", ""),
+                    }
+            return {}
+        except Exception as e:
+            logger.error(f"Error finding close deal for {position_id}: {e}")
+            return {}
 
     def get_market_price(self, symbol: str) -> Dict:
         try:

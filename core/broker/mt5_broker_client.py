@@ -88,32 +88,17 @@ class MT5BrokerClient:
                 broker_name = BROKER_CONFIG.get("name") or server
                 logger.success(f"Connected to {broker_name} {account_type} Account #{login}")
                 return True
-            return await self._connect_mock(demo)
+            self.connected = False
+            logger.error(f"MT5 connection failed for login #{login} on {server} — bot will NOT start with fake/mock data")
+            return False
         except ImportError:
-            logger.warning("MetaTrader5 not installed — using mock mode")
-            return await self._connect_mock(demo)
+            self.connected = False
+            logger.error("MetaTrader5 package is not installed — cannot connect to a real broker, refusing to start")
+            return False
         except Exception as e:
+            self.connected = False
             logger.error(f"MT5 connection error: {e}")
-            return await self._connect_mock(demo)
-
-    async def _connect_mock(self, demo: bool) -> bool:
-        await asyncio.sleep(0.5)
-        self.account_info = {
-            "login": 0,
-            "balance": self.demo_balance,
-            "equity": self.demo_balance,
-            "margin": 0.0,
-            "free_margin": self.demo_balance,
-            "leverage": BROKER_CONFIG.get("leverage", 100),
-            "currency": TRADING_CONFIG.get("account_currency", "USD"),
-            "name": "Demo Account (Mock)",
-            "server": "Mock-Server",
-            "profit": 0.0,
-        }
-        self.connected = True
-        self.is_demo = demo
-        logger.warning(f"Using MOCK connection: Balance ${self.demo_balance:,.2f}")
-        return True
+            return False
 
     @staticmethod
     def verify_credentials(login: int, password: str, server: str, demo: bool = True, timeout: int = 15, path: Optional[str] = None) -> tuple:
@@ -197,9 +182,17 @@ class MT5BrokerClient:
                 "volume": p.get("volume", 0),
                 "entry_price": p.get("price_open", 0),
                 "profit": p.get("profit", 0),
+                "pnl_usd": p.get("profit", 0),
+                "stop_loss": p.get("sl", 0),
+                "take_profit": p.get("tp", 0),
                 "status": "open",
             } for p in positions]
         return [o for o in self.orders if o.get("status") == "open"]
+
+    async def get_close_deal(self, position_id: int) -> Dict:
+        if self.use_mt5 and self.mt5_bridge:
+            return self.mt5_bridge.get_close_deal_for_position(position_id)
+        return {}
 
     async def get_order_history(self, limit: int = 100) -> List[Dict]:
         if self.use_mt5 and self.mt5_bridge:

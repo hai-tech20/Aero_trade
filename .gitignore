@@ -14,8 +14,11 @@ venv/
 .cache/
 data/*.parquet
 data/aero_trade_ledger.db
+data/accounts.json
 logs/
 *.log
+FUT86_16.txt
+annual.txt
 
 # IDE
 .vs/

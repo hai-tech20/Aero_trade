@@ -19,7 +19,7 @@ from core.broker.credential_store import (
 )
 from core.broker.mt5_broker_client import MT5BrokerClient
 from core.engine.aero_trade_bot import AeroTradeBot
-from core.ledger.trade_ledger import get_closed_trades, get_trade_summary, init_ledger
+from core.ledger.trade_ledger import get_closed_trades, get_trade_summary, init_ledger, build_self_analysis
 from ai_engine.training.model_status import get_model_status
 from utils.logger import logger
 
@@ -131,6 +131,7 @@ async def get_account(account_id: str):
             positions = []
             if bot.broker and bot.broker.connected:
                 positions = await bot.broker.get_open_orders()
+            floating = bot.get_floating_stats()
             return {
                 **info,
                 "account_id": account_id,
@@ -138,6 +139,7 @@ async def get_account(account_id: str):
                 "live_trading_enabled": meta.get("live_trading_enabled", False),
                 "open_positions_count": len(positions),
                 "broker": meta.get("broker_id", ""),
+                **floating,
             }
         
         creds = load_broker_credentials(account_id)
@@ -196,6 +198,15 @@ async def get_positions(account_id: str):
         raise
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+@app.get("/accounts/{account_id}/self_analysis")
+def get_self_analysis(account_id: str, days: int = 30):
+    try:
+        get_account_meta(account_id)
+    except KeyError:
+        raise HTTPException(404, "Account not found")
+    return build_self_analysis(account_id, days=days)
 
 
 @app.get("/accounts/{account_id}/trades")

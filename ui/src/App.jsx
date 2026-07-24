@@ -323,7 +323,7 @@ function Dashboard({ account, onSettings }) {
           fetch(`${API}/accounts/${id}`).then(r => { if (!r.ok) throw new Error(); return r.json(); }).catch(() => null),
           fetch(`${API}/accounts/${id}/positions`).then(r => { if (!r.ok) throw new Error(); return r.json(); }).catch(() => null),
           fetch(`${API}/accounts/${id}/trades`).then(r => { if (!r.ok) throw new Error(); return r.json(); }).catch(() => null),
-          fetch(`${API}/accounts/${id}/activity?limit=50`).then(r => { if (!r.ok) throw new Error(); return r.json(); }).catch(() => ({ activity: [] })),
+          fetch(`${API}/accounts/${id}/activity?limit=300`).then(r => { if (!r.ok) throw new Error(); return r.json(); }).catch(() => ({ activity: [] })),
         ])
         if (!mounted) return
         if (accRes) setInfo(prev => ({ ...prev, ...accRes }))
@@ -383,6 +383,8 @@ function Dashboard({ account, onSettings }) {
       <div className="stats-grid">
         <div className="stat-card"><span>Balance</span><strong>${(info.balance || 0).toLocaleString()}</strong></div>
         <div className="stat-card"><span>Equity</span><strong>${(info.equity || 0).toLocaleString()}</strong></div>
+        <div className="stat-card"><span>Floating P&L</span><strong className={(info.floating_pnl || 0) >= 0 ? 'profit' : 'loss'}>${(info.floating_pnl || 0).toFixed(2)}</strong></div>
+        <div className="stat-card"><span>Open W/L</span><strong>{info.open_win_count || 0}W / {info.open_loss_count || 0}L</strong></div>
         <div className="stat-card"><span>Win Rate</span><strong>{(s.win_rate || 0).toFixed(1)}%</strong></div>
         <div className="stat-card"><span>Total P&L</span><strong className={s.total_pnl >= 0 ? 'profit' : 'loss'}>${(s.total_pnl || 0).toFixed(2)}</strong></div>
       </div>
@@ -415,6 +417,7 @@ function Dashboard({ account, onSettings }) {
             <span className={t.outcome === 'win' ? 'profit' : 'loss'}>
               ${(t.pnl_usd || 0).toFixed(2)} ({t.outcome})
             </span>
+            <span className="muted" title={t.close_reason || ''}>{t.closed_by || 'unknown'}</span>
           </div>
         ))}
       </section>

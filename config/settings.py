@@ -32,7 +32,7 @@ TRADING_CONFIG: Dict[str, Any] = {
     "timeframes": ["1min", "5min", "15min"],
     "risk_per_trade": 0.02,
     "max_daily_loss": 0.05,
-    "max_positions": 10,
+    "max_positions": 18,
     "max_position_size": 0.15,
     "default_lot_size": 0.01,
     "broker": "",
@@ -90,6 +90,11 @@ RISK_CONFIG: Dict[str, Any] = {
     "crypto_tp_dollars": 150,
     "metal_sl_pips": 30,
     "metal_tp_pips": 20,
+    "allow_early_close": False,
+    "early_close_min_confidence": 0.65,
+    "early_close_confirm_cycles": 2,
+    "floating_loss_size_reduction_pct": 25.0,
+    "floating_loss_threshold_pct": 2.0,
 }
 
 BROKER_CONFIG: Dict[str, Any] = {

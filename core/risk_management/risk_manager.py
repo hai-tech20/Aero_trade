@@ -74,6 +74,8 @@ class RiskManager:
         sentiment_agrees: bool,
         symbol: str,
         symbol_info: Dict[str, Any] | None = None,
+        floating_pnl: float = 0.0,
+        floating_pnl_pct: float = 0.0,
     ) -> float:
         if account_balance < 100:
             base_risk_pct = 0.02
@@ -87,6 +89,16 @@ class RiskManager:
         confidence_multiplier = 0.75 + (fused_confidence * 0.5)
         if not sentiment_agrees:
             confidence_multiplier *= 0.5
+
+        # Reduce size when sitting on meaningful unrealized losses
+        loss_threshold = RISK_CONFIG.get("floating_loss_threshold_pct", 2.0)
+        reduction_pct = RISK_CONFIG.get("floating_loss_size_reduction_pct", 25.0) / 100.0
+        if floating_pnl_pct < -loss_threshold:
+            confidence_multiplier *= (1.0 - reduction_pct)
+            logger.info(
+                f"reducing position size by {reduction_pct*100:.0f}% — "
+                f"currently sitting on unrealized losses ({floating_pnl_pct:.1f}% floating, ${floating_pnl:.2f})"
+            )
 
         risk_amount = account_balance * base_risk_pct * confidence_multiplier
         pip_value = get_tick_value_from_broker(symbol_info or {}, default=10.0)
