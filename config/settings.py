@@ -29,72 +29,141 @@ TRADING_CONFIG: Dict[str, Any] = {
         "AUDCAD", "AUDNZD", "AUDCHF", "NZDCAD", "NZDCHF", "CADCHF",
         "USDZAR", "USDMXN", "USDSGD", "USDNOK", "USDSEK",
     ],
-    "timeframes": ["1min", "5min", "15min"],
-    "risk_per_trade": 0.02,
-    "max_daily_loss": 0.05,
-    "max_positions": 18,
-    "max_position_size": 0.15,
+    "timeframes": ["1min", "5min", "15min", "30min", "1h", "4h", "1d"],
+    # Every model uses a fixed 60-bar horizon for its training target
+    # regardless of timeframe — on 4h/1d that's a ~10-day to ~3-month horizon,
+    # not an intraday move. Live trading should only pick from timeframes
+    # short enough that the resulting signal is actually intraday-relevant;
+    # 4h/1d models still train and can be inspected, just not traded live.
+    # 1min excluded from live selection: its models backtest at similar
+    # accuracy to longer timeframes, but on 1-minute bars the absolute price
+    # move is small enough that spread eats a much larger share of the edge
+    # — the same statistical accuracy is measurably less profitable net of
+    # real trading cost. Every trade overnight on 2026-08-24 came from a
+    # 1min model and the session lost money; 5min+ timeframes give the same
+    # underlying edge more room to clear transaction costs.
+    # 30min/1h further excluded: with the flat 60-bar horizon above, their
+    # real target move is ~30h/~60h out — genuinely multi-day swing setups,
+    # not intraday, despite the "30min"/"1h" label. Only 5min (5h horizon)
+    # and 15min (15h horizon) stay within a trading day.
+    "live_intraday_timeframes": ["5min", "15min"],
+    "risk_per_trade": 0.015,
+    "max_daily_loss": 0.035,
+    "max_positions": 8,
+    "max_position_size": 0.08,
     "default_lot_size": 0.01,
     "broker": "",
     "account_currency": "USD",
     "scalping_enabled": True,
     "immediate_execution": True,
     "aggressive_mode": False,
-    "news_blackout_minutes": 15,
+    "news_blackout_minutes": 25,
     "max_symbols": 50,
 }
 
 AI_CONFIG: Dict[str, Any] = {
     "enabled": True,
-    "min_confidence": 0.30,
+    "min_confidence": 0.60,
     "update_interval": 5,
+    "min_model_accuracy": 0.60,
+    "promotion_absolute_floor": 0.63,
+    "promotion_baseline_margin": 0.02,
+    "use_ultra_ensemble": True,
+    "minimum_active_submodels": 3,
+    "ensemble_agreement_threshold": 0.70,
+    # This machine has 8 cores / 8GB RAM — all-core parallelism (-1) caused
+    # a hard crash after 21 combos of a long training run (memory allocation
+    # failures cascading through multiple sub-models, then an uncaught
+    # MemoryError killed the whole process). Each parallel tree-building
+    # worker holds its own memory; more workers = more simultaneous peak
+    # usage. 4 trades some wall-clock speed for enough headroom that the
+    # live bot server (also running concurrently) doesn't get starved.
+    "ensemble_n_jobs": 4,
+    "ensemble_fast_mode": True,
+    "max_train_rows_ltf": 25000,
+    "max_train_rows_mtf": 35000,
+    # Lowered from 45000 — this was the single biggest per-combo memory
+    # driver for 30min/1h training (larger row count -> larger feature
+    # matrix + larger trees), and 30min/1h combos were the ones that
+    # actually crashed the machine (feature matrix at 45k rows x 239 feats
+    # alone is ~43MB in float64 before any model even starts training, on
+    # top of 7 sub-models each holding their own copies/trees). 22000 keeps
+    # training on real, ample data while meaningfully cutting peak memory
+    # so this can coexist with the live bot server on an 8GB machine.
+    "max_train_rows_htf": 22000,
 }
 
 SIGNAL_FUSION_CONFIG: Dict[str, Any] = {
     "weights": {
-        "ai": 0.25,
-        "technical": 0.25,
+        "ai": 0.38,
+        "technical": 0.14,
         "price_action": 0.30,
-        "market_structure": 0.10,
-        # Sentiment: only Alpha Vantage is used for directional signal;
-        # Finnhub only provides article count (news volume flag, not sentiment)
+        "market_structure": 0.08,
         "sentiment": 0.10,
     },
     "min_confidence": {
-        "ai": 0.30,
-        "technical": 0.30,
-        "price_action": 0.20,
-        # Sentiment confidence only from Alpha Vantage
-        "sentiment": 0.10,
-        "combined": 0.35,
+        "ai": 0.55,
+        "technical": 0.40,
+        "price_action": 0.45,
+        "sentiment": 0.20,
+        "combined": 0.65,
     },
-    "min_sources": 2,
+    "min_sources": 3,
     "time_window_seconds": 300,
     "decay_factor": 0.95,
     "require_confirmation": True,
+    "require_price_action_confirmation": True,
+    "require_ai_above_floor": True,
+    "require_macro_bias_alignment": True,
+    "sniper_required_conditions": 1,
+    "final_combined_confidence_floor": 0.70,
+    # When sniper finds no structural signal at all, a trade can still fire on
+    # AI + technical + macro alone if their combined confidence clears the
+    # normal floor by this much extra — compensates for skipping structural
+    # confirmation instead of requiring it unconditionally.
+    "favourable_no_sniper_confidence_bonus": 0.12,
 }
 
 RISK_CONFIG: Dict[str, Any] = {
-    "stop_loss_pips": 100,
-    "take_profit_pips": 0,
+    "stop_loss_pips": 50,
+    "take_profit_pips": 125,
     "variable_tp": True,
-    "tp_multiplier": 1.5,
-    "max_drawdown_pct": 10.0,
-    "max_daily_trades": 200,
-    "max_consecutive_losses": 5,
-    "max_position_pct": 5.0,
-    "max_daily_loss_pct": 5.0,
-    "scalping_sl_pips": 50,
-    "scalping_tp_pips": 30,
-    "crypto_sl_dollars": 200,
-    "crypto_tp_dollars": 150,
-    "metal_sl_pips": 30,
-    "metal_tp_pips": 20,
-    "allow_early_close": False,
-    "early_close_min_confidence": 0.65,
-    "early_close_confirm_cycles": 2,
-    "floating_loss_size_reduction_pct": 25.0,
-    "floating_loss_threshold_pct": 2.0,
+    "tp_multiplier": 2.5,
+    "min_rr_ratio": 2.0,
+    "target_rr_ratio": 2.5,
+    "aggressive_rr_ratio": 3.2,
+    "max_drawdown_pct": 45.0,
+    "max_daily_trades": 40,
+    "max_consecutive_losses": 3,
+    "max_position_pct": 2.0,
+    "max_daily_loss_pct": 3.5,
+    "scalping_sl_pips": 40,
+    "scalping_tp_pips": 100,
+    "crypto_sl_dollars": 150,
+    "crypto_tp_dollars": 450,
+    "metal_sl_pips": 25,
+    "metal_tp_pips": 75,
+    "allow_early_close": True,
+    "early_close_min_confidence": 0.78,
+    "early_close_confirm_cycles": 3,
+    "floating_loss_size_reduction_pct": 35.0,
+    "floating_loss_threshold_pct": 1.5,
+    "use_atr_sl_tp": True,
+    "atr_sl_multiplier": 1.2,
+    "atr_tp_multiplier": 3.0,
+    "break_even_enabled": True,
+    "break_even_trigger_r": 0.8,
+    "break_even_pad_r": 0.1,
+    "trailing_stop_enabled": True,
+    "trailing_trigger_r": 1.5,
+    "trailing_distance_atr": 1.0,
+    "partial_tp_enabled": True,
+    "partial_tp_1_rr": 1.0,
+    "partial_tp_1_close_pct": 0.35,
+    "partial_tp_2_rr": 2.0,
+    "partial_tp_2_close_pct": 0.35,
+    "adx_entry_threshold": 20.0,
+    "adx_block_entry_below": 18.0,
 }
 
 BROKER_CONFIG: Dict[str, Any] = {
@@ -106,7 +175,7 @@ BROKER_CONFIG: Dict[str, Any] = {
 
 DATA_CONFIG: Dict[str, Any] = {
     "history_days": 365,
-    "history_years": 5,
+    "history_years": 15,
     "update_interval": 60,
 }
 

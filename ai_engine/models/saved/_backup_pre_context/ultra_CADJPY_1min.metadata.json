@@ -1,0 +1,25 @@
+{
+  "symbol": "CADJPY",
+  "timeframe": "1min",
+  "promoted": true,
+  "promoted_at": "2026-08-14T22:35:34.848670",
+  "accuracy": 0.644398766700925,
+  "oof_accuracy": 0.6023952775570439,
+  "actionable_accuracy": 0.644398766700925,
+  "actionable_samples": 2919,
+  "baseline_accuracy": 0.0,
+  "expectancy_r": 0.14192360791532455,
+  "precision_buy": 0.3195056209322201,
+  "precision_sell": 0.6888242625675114,
+  "random_baseline_precision": 0.2857142857142857,
+  "precision_buy_edge_pts": 3.3791335217934426,
+  "labeled_samples": 88090,
+  "history_rows": 89457,
+  "absolute_floor": 0.6,
+  "margin_required": 0.02,
+  "validation": {
+    "candidate_model_accuracy": 0.644398766700925,
+    "promoted": true,
+    "model_family": "ultra"
+  }
+}

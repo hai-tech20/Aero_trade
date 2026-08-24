@@ -22,6 +22,18 @@ class MT5Bridge:
     """Connect to any MT5 broker."""
 
     _mt5_lock = threading.Lock()
+    # Shared, persistent pool reused for every MT5 call for the life of the
+    # process. The previous implementation created a brand-new
+    # ThreadPoolExecutor on EVERY call and only ever shut it down on the
+    # timeout path — the success path (the overwhelming majority of calls,
+    # fired many times per second across a multi-hour session) leaked an
+    # executor every time. Over hours of continuous polling that accumulates
+    # into hundreds of thousands of un-cleaned executors, which is what
+    # exhausted this machine's memory and froze the whole server. 2 workers
+    # (not 1) so a single slow/stuck call can't permanently wedge every
+    # future MT5 call — actual MT5 API access is still serialized by
+    # _mt5_lock regardless of pool size.
+    _mt5_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="mt5-call")
 
     def __init__(self):
         self.connected = False
@@ -29,24 +41,38 @@ class MT5Bridge:
         self._last_login: Optional[int] = None
         self._last_password: Optional[str] = None
         self._last_server: Optional[str] = None
+        self._last_demo: Optional[bool] = None
         self._last_path: Optional[str] = None
+        self._client_refs: int = 0
 
     def _call_mt5_with_timeout(self, mt5_func: Callable[..., Any], *args: Any, timeout: int = 10, **kwargs: Any) -> Any:
-        """Run an MT5 call in a thread pool with timeout, serialized with a lock."""
+        """Run an MT5 call in the shared thread pool with timeout, serialized with a lock."""
         def wrapped():
             with MT5Bridge._mt5_lock:
                 return mt5_func(*args, **kwargs)
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        future = executor.submit(wrapped)
+        future = MT5Bridge._mt5_executor.submit(wrapped)
         try:
             return future.result(timeout=timeout)
         except concurrent.futures.TimeoutError:
             logger.error(f"MT5 call timed out after {timeout}s")
-            executor.shutdown(wait=False)
             raise TimeoutError(f"MT5 call timed out after {timeout}s")
 
     def connect(self, login: int, password: str, server: str, demo: bool = True, path: Optional[str] = None) -> bool:
         try:
+            if self.connected:
+                if (
+                    self._last_login == login
+                    and self._last_password == password
+                    and self._last_server == server
+                    and self._last_demo == demo
+                    and self._last_path == path
+                ):
+                    self._client_refs += 1
+                    logger.info(f"Reusing existing MT5 connection (refs={self._client_refs})")
+                    return True
+                logger.warning("MT5 already connected with different credentials – forcing reconnect")
+                self.disconnect(force=True)
+
             init_kwargs = {}
             if path:
                 init_kwargs["path"] = path
@@ -65,20 +91,43 @@ class MT5Bridge:
                 logger.error(f"MT5 initialize failed: {err}")
                 return False
 
+            # If the terminal is ALREADY authenticated for this exact account
+            # (e.g. the user logged in manually, or a previous process holds
+            # the session), do NOT call login() again — mt5.login() forces a
+            # brand-new authentication handshake with the trade server, which
+            # tears down whatever session is currently active the instant it
+            # starts, even before the new handshake's own result is known.
+            # Calling it redundantly on an already-correct session destroys a
+            # working connection for no benefit and, if the broker is
+            # rate-limiting fresh logins, replaces "already connected" with
+            # "now fully disconnected".
+            already_authorized = False
             try:
-                def do_login():
-                    return mt5_api.login(login=login, password=password, server=server)
-                authorized = self._call_mt5_with_timeout(do_login, timeout=10)
-            except TimeoutError:
-                logger.error("MT5 login timed out")
+                existing_info = self._call_mt5_with_timeout(mt5_api.account_info, timeout=5)
+                if existing_info is not None and int(existing_info.login) == int(login):
+                    already_authorized = True
+                    logger.info(f"Terminal already authenticated as #{login} — reusing session, skipping login()")
+            except Exception:
+                pass
+
+            if already_authorized:
+                authorized = True
+            else:
                 try:
-                    mt5_api.shutdown()
-                except Exception:
-                    pass
-                return False
+                    def do_login():
+                        return mt5_api.login(login=login, password=password, server=server)
+                    authorized = self._call_mt5_with_timeout(do_login, timeout=10)
+                except TimeoutError:
+                    logger.error("MT5 login timed out")
+                    try:
+                        mt5_api.shutdown()
+                    except Exception:
+                        pass
+                    return False
 
             if authorized:
                 self.connected = True
+                self._client_refs += 1
                 try:
                     info = mt5_api.account_info()
                     if info:
@@ -95,6 +144,7 @@ class MT5Bridge:
                 self._last_login = login
                 self._last_password = password
                 self._last_server = server
+                self._last_demo = demo
                 self._last_path = path
                 logger.success(f"{APP_NAME}: Connected to {broker_name} {account_type} #{login}")
                 return True
@@ -117,7 +167,14 @@ class MT5Bridge:
             return False
         logger.warning("Attempting MT5 reconnect after lost IPC connection...")
         self.connected = False
-        return self.connect(self._last_login, self._last_password, self._last_server, path=self._last_path)
+        self._client_refs = max(0, self._client_refs)
+        return self.connect(
+            self._last_login,
+            self._last_password,
+            self._last_server,
+            demo=self._last_demo if self._last_demo is not None else True,
+            path=self._last_path,
+        )
 
     def get_account_info(self) -> Dict:
         if not self.connected:
@@ -211,9 +268,16 @@ class MT5Bridge:
                 "type_filling": None,  # Set per attempt
             }
 
+            sl_price_in = kwargs.get("sl_price", 0) or kwargs.get("sl_absolute", 0)
+            tp_price_in = kwargs.get("tp_price", 0) or kwargs.get("tp_absolute", 0)
             sl_pips = kwargs.get("stop_loss", 0)
             tp_pips = kwargs.get("take_profit", 0)
-            if sl_pips or tp_pips:
+            if sl_price_in or tp_price_in:
+                if sl_price_in:
+                    order["sl"] = float(sl_price_in)
+                if tp_price_in:
+                    order["tp"] = float(tp_price_in)
+            elif sl_pips or tp_pips:
                 sl_price, tp_price = self._sl_tp_prices(symbol, order_type, price, sl_pips, tp_pips)
                 if sl_pips:
                     order["sl"] = sl_price
@@ -280,28 +344,57 @@ class MT5Bridge:
                 "magic": position.magic,
                 "comment": f"{APP_NAME} Close",
                 "type_time": mt5_api.ORDER_TIME_GTC,
-                "type_filling": mt5_api.ORDER_FILLING_IOC,
+                "type_filling": None,  # set per attempt
             }
-            # Send order with timeout
-            def send_close():
-                return mt5_api.order_send(close_request)
-            result = self._call_mt5_with_timeout(send_close, timeout=15)
-            if result.retcode == mt5_api.TRADE_RETCODE_DONE:
-                return {"success": True, "ticket": result.deal, "pnl_usd": position.profit}
-            return {"success": False, "error": result.comment}
+            # Different symbols/brokers require different filling modes —
+            # try each like the open-order path does. The single-mode
+            # (IOC-only) version of this could leave a position permanently
+            # un-closeable if the broker rejects IOC for that symbol.
+            filling_modes = [
+                mt5_api.ORDER_FILLING_IOC,
+                mt5_api.ORDER_FILLING_RETURN,
+                mt5_api.ORDER_FILLING_FOK,
+            ]
+            last_result = None
+            for filling_mode in filling_modes:
+                close_request["type_filling"] = filling_mode
+                def send_close():
+                    return mt5_api.order_send(close_request)
+                try:
+                    result = self._call_mt5_with_timeout(send_close, timeout=15)
+                except Exception as e:
+                    logger.error(f"Close attempt with filling mode {filling_mode} failed: {e}")
+                    continue
+                last_result = result
+                if result and result.retcode == mt5_api.TRADE_RETCODE_DONE:
+                    return {"success": True, "ticket": result.deal, "pnl_usd": position.profit}
+            if last_result:
+                logger.error(f"Close order failed (retcode {last_result.retcode}): {last_result.comment}")
+                return {"success": False, "error": last_result.comment, "retcode": last_result.retcode}
+            return {"success": False, "error": "All close attempts failed"}
         except Exception as e:
             logger.error(f"Close order error: {e}")
             return {"success": False, "error": str(e)}
 
-    def get_positions(self, symbol: str = "") -> List[Dict]:
+    def get_positions(self, symbol: str = "") -> Optional[List[Dict]]:
+        """Returns None when the query itself failed/timed out — this is NOT
+        the same as a confirmed empty result. mt5_api.positions_get() returns
+        None on failure but () (also falsy) on a genuine "no open positions"
+        result; collapsing both to [] previously caused monitor_positions()
+        to treat a transient MT5 hiccup as every open position having closed,
+        which produced a false "closed" trade log entry for a position that
+        was still genuinely open at the broker."""
         try:
             def get_pos():
                 return mt5_api.positions_get(symbol=symbol) if symbol else mt5_api.positions_get()
             positions = self._call_mt5_with_timeout(get_pos, timeout=10)
-            return [p._asdict() for p in positions] if positions else []
+            if positions is None:
+                logger.warning("get_positions: MT5 query returned no result (failure/timeout) — position state unknown this cycle")
+                return None
+            return [p._asdict() for p in positions]
         except Exception as e:
             logger.error(f"Error getting positions: {e}")
-            return []
+            return None
 
     def get_deal_history(self, limit: int = 100) -> List[Dict]:
         try:
@@ -341,6 +434,12 @@ class MT5Bridge:
             def get_deals():
                 return mt5_api.history_deals_get(datetime.now() - timedelta(days=30), datetime.now())
             deals = self._call_mt5_with_timeout(get_deals, timeout=15)
+            if not deals:
+                # MT5's deal history can lag a couple seconds behind the actual
+                # close (this terminal has had sync issues tonight) — one retry
+                # beats permanently logging a real trade as unattributed.
+                time.sleep(2.0)
+                deals = self._call_mt5_with_timeout(get_deals, timeout=15)
             if not deals:
                 return {}
             # Prefer OUT deals matching position_id
@@ -392,13 +491,20 @@ class MT5Bridge:
             logger.error(f"Error getting market price for {symbol}: {e}")
             return {}
 
-    def get_all_symbols(self) -> List[str]:
+    def get_all_symbols(self) -> Optional[List[str]]:
+        """Returns None on a genuine query failure/timeout — distinct from a
+        real empty result, which is not something a live broker connection
+        should ever actually produce. Collapsing the two here once caused
+        initialize() to permanently start a bot session with zero tradeable
+        symbols (a single startup timeout under memory pressure), which then
+        spun forever logging "0 symbols analyzed" every cycle."""
         try:
             def get_symbols():
                 return mt5_api.symbols_get()
             symbols = self._call_mt5_with_timeout(get_symbols, timeout=10)
             if symbols is None:
-                return []
+                logger.warning("get_all_symbols: MT5 query returned no result (failure/timeout)")
+                return None
             tradeable = []
             for symbol in symbols:
                 sd = symbol._asdict()
@@ -407,7 +513,7 @@ class MT5Bridge:
             return tradeable
         except Exception as e:
             logger.error(f"Error getting symbols: {e}")
-            return []
+            return None
 
     def _tf_map(self):
         return {
@@ -440,22 +546,38 @@ class MT5Bridge:
         try:
             def select_symbol() -> Any:
                 return mt5_api.symbol_select(symbol, True)
+
             selected = bool(self._call_mt5_with_timeout(select_symbol, timeout=10))
             info = self.get_symbol_info(symbol)
             visible = bool(info.get("visible", False)) if info else False
+
             if not selected or not info or not visible:
                 err = self._get_last_error_details()
                 logger.warning(
                     f"Symbol selection check failed for {symbol}: selected={selected} visible={visible} info_exists={bool(info)} | last_error={err['raw']}"
                 )
+
                 if err["raw"] and err["raw"][0] == -10004:
                     if self.reconnect():
                         logger.warning(f"Reconnected — retrying symbol selection for {symbol}")
                         selected = bool(self._call_mt5_with_timeout(select_symbol, timeout=10))
                         info = self.get_symbol_info(symbol)
                         visible = bool(info.get("visible", False)) if info else False
-                        return bool(selected and info and visible)
-                return False
+                        if selected and info and visible:
+                            return True
+
+                # If the symbol info exists but is still not visible, retry a few times
+                if info and not visible:
+                    for attempt in range(2):
+                        selected = bool(self._call_mt5_with_timeout(select_symbol, timeout=10))
+                        info = self.get_symbol_info(symbol)
+                        visible = bool(info.get("visible", False)) if info else False
+                        if selected and info and visible:
+                            return True
+                        time.sleep(0.25)
+
+                return bool(selected and info and visible)
+
             return True
         except Exception as e:
             logger.error(f"Error selecting symbol {symbol}: {e}")
@@ -543,12 +665,100 @@ class MT5Bridge:
             return tick_val / tick_size * pip
         return 10.0
 
-    def disconnect(self):
+    def modify_position_sl_tp(self, ticket: int, sl: float = 0.0, tp: float = 0.0) -> Dict:
+        try:
+            def get_pos():
+                return mt5_api.positions_get(ticket=ticket)
+            positions = self._call_mt5_with_timeout(get_pos, timeout=10)
+            if not positions:
+                return {"success": False, "error": "Position not found"}
+            position = positions[0]
+            request = {
+                "action": mt5_api.TRADE_ACTION_SLTP,
+                "symbol": position.symbol,
+                "position": ticket,
+                "sl": float(sl) if sl else 0.0,
+                "tp": float(tp) if tp else 0.0,
+                "magic": getattr(position, "magic", 234000),
+                "comment": f"{APP_NAME} Modify",
+            }
+            def send_modify():
+                return mt5_api.order_send(request)
+            result = self._call_mt5_with_timeout(send_modify, timeout=15)
+            if result.retcode == mt5_api.TRADE_RETCODE_DONE:
+                return {"success": True, "ticket": result.order, "price": result.price}
+            return {"success": False, "error": result.comment, "retcode": result.retcode}
+        except Exception as e:
+            logger.error(f"Modify position error: {e}")
+            return {"success": False, "error": str(e)}
+
+    def close_partial_position(self, ticket: int, volume: float) -> Dict:
+        try:
+            def get_pos():
+                return mt5_api.positions_get(ticket=ticket)
+            positions = self._call_mt5_with_timeout(get_pos, timeout=10)
+            if not positions:
+                return {"success": False, "error": "Position not found"}
+            position = positions[0]
+            if volume <= 0 or volume >= position.volume:
+                return {"success": False, "error": f"Partial volume {volume} invalid (position has {position.volume})"}
+            vol_step = getattr(position, "volume_step", 0.01)
+            if vol_step > 0:
+                volume = round(volume / vol_step) * vol_step
+                decimals = len(str(vol_step).split(".")[-1]) if "." in str(vol_step) else 2
+                volume = round(volume, decimals)
+            if volume <= 0:
+                return {"success": False, "error": "Partial volume rounded to 0"}
+            close_type = mt5_api.ORDER_TYPE_SELL if position.type == mt5_api.ORDER_TYPE_BUY else mt5_api.ORDER_TYPE_BUY
+            def get_tick():
+                return mt5_api.symbol_info_tick(position.symbol)
+            tick = self._call_mt5_with_timeout(get_tick, timeout=10)
+            if not tick:
+                return {"success": False, "error": "Could not get tick data"}
+            price = tick.bid if position.type == mt5.ORDER_TYPE_BUY else tick.ask
+            close_request = {
+                "action": mt5_api.TRADE_ACTION_DEAL,
+                "symbol": position.symbol,
+                "volume": volume,
+                "type": close_type,
+                "position": ticket,
+                "price": price,
+                "deviation": 20,
+                "magic": getattr(position, "magic", 234000),
+                "comment": f"{APP_NAME} PartialClose",
+                "type_time": mt5_api.ORDER_TIME_GTC,
+                "type_filling": mt5_api.ORDER_FILLING_IOC,
+            }
+            def send_close():
+                return mt5_api.order_send(close_request)
+            result = self._call_mt5_with_timeout(send_close, timeout=15)
+            if result.retcode == mt5_api.TRADE_RETCODE_DONE:
+                return {
+                    "success": True,
+                    "ticket": result.deal,
+                    "order": result.order,
+                    "price": result.price,
+                    "volume_closed": volume,
+                    "volume_remaining": position.volume - volume,
+                    "pnl_usd": 0.0,
+                }
+            return {"success": False, "error": result.comment, "retcode": result.retcode}
+        except Exception as e:
+            logger.error(f"Partial close error: {e}")
+            return {"success": False, "error": str(e)}
+
+    def disconnect(self, force: bool = False):
+        if self._client_refs > 0 and not force:
+            self._client_refs -= 1
+            logger.info(f"MT5 disconnect requested; {self._client_refs} client(s) still holding the connection")
+            if self._client_refs > 0:
+                return
         try:
             mt5_api.shutdown()
         except Exception:
             pass
         self.connected = False
+        self._client_refs = 0
         logger.info("Disconnected from MT5")
 
 

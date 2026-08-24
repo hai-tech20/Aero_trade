@@ -313,17 +313,24 @@ function Dashboard({ account, onSettings }) {
   const [activity, setActivity] = useState([])
   const [toggling, setToggling] = useState(false)
   const [error, setError] = useState('')
+  const [statusMsg, setStatusMsg] = useState('')
 
   useEffect(() => {
     const id = account.account_id
     let mounted = true
     const load = async () => {
       try {
+        // actRes stays null on a failed fetch (distinct from a successful
+        // fetch that genuinely returns no activity) so a transient network
+        // hiccup can't get misread as "the bot stopped" — previously a
+        // single failed poll silently fell back to an empty activity list,
+        // which read as not-running and flipped the button/log view even
+        // though the backend was still running the whole time.
         const [accRes, posRes, tradesRes, actRes] = await Promise.all([
           fetch(`${API}/accounts/${id}`).then(r => { if (!r.ok) throw new Error(); return r.json(); }).catch(() => null),
           fetch(`${API}/accounts/${id}/positions`).then(r => { if (!r.ok) throw new Error(); return r.json(); }).catch(() => null),
           fetch(`${API}/accounts/${id}/trades`).then(r => { if (!r.ok) throw new Error(); return r.json(); }).catch(() => null),
-          fetch(`${API}/accounts/${id}/activity?limit=300`).then(r => { if (!r.ok) throw new Error(); return r.json(); }).catch(() => ({ activity: [] })),
+          fetch(`${API}/accounts/${id}/activity?limit=300`).then(r => { if (!r.ok) throw new Error(); return r.json(); }).catch(() => null),
         ])
         if (!mounted) return
         if (accRes) setInfo(prev => ({ ...prev, ...accRes }))
@@ -331,8 +338,14 @@ function Dashboard({ account, onSettings }) {
         if (tradesRes) setTrades(tradesRes)
         if (actRes) setActivity(actRes.activity || [])
 
-        if (!toggling) {
-          const isRunning = actRes && actRes.activity && actRes.activity.length > 0 && actRes.activity.some(a => a.message && a.message.includes('cycle'))
+        // Only re-evaluate running state off a fetch that actually
+        // succeeded. A recent timestamp on the newest entry is a more
+        // reliable "is it actually alive" signal than searching for the
+        // literal word "cycle" in whatever window happened to be fetched.
+        if (!toggling && actRes) {
+          const items = actRes.activity || []
+          const newest = items.length ? items[items.length - 1] : null
+          const isRunning = !!(newest && (Date.now() - new Date(newest.timestamp).getTime()) < 30000)
           setRunning(isRunning)
         }
       } catch {
@@ -347,17 +360,62 @@ function Dashboard({ account, onSettings }) {
     const id = account.account_id
     setToggling(true)
     setError('')
+    setStatusMsg('')
     try {
       const endpoint = running ? 'stop' : 'start'
       const res = await fetch(`${API}/accounts/${id}/${endpoint}`, { method: 'POST' })
+      const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
         throw new Error(data.detail || `Request failed with ${res.status}`)
       }
-      await new Promise(r => setTimeout(r, 800))
-      const actRes = await fetch(`${API}/accounts/${id}/activity?limit=3`).then(r => r.json()).catch(() => ({ activity: [] }))
-      const isRunning = actRes.activity && actRes.activity.some(a => a.message && a.message.includes('cycle'))
-      setRunning(isRunning)
+
+      if (endpoint === 'start') {
+        // The backend tells us up front whether it's spinning up a new bot
+        // or the bot was already running — no need to guess by polling in
+        // the already-running case, which previously looked identical to a
+        // slow startup and left the button stuck on "Starting…" with no
+        // explanation.
+        if (data.status === 'already_running') {
+          setStatusMsg('Bot was already running — no restart needed.')
+          setRunning(true)
+          return
+        }
+
+        // Starting the bot means a real MT5 connection plus loading every
+        // ultra-ensemble model and market data for all 35 symbols — this can
+        // take anywhere from a few seconds to well over a minute. A single
+        // check after a fixed 800ms was almost always too early, so the
+        // button would silently revert to "Start Trading" even while the
+        // bot was successfully starting up in the background. Poll for real
+        // activity instead of guessing a fixed delay, and stream it into the
+        // log view as it appears so the UI reflects genuine progress.
+        const deadline = Date.now() + 60000
+        let confirmed = false
+        while (Date.now() < deadline) {
+          const actRes = await fetch(`${API}/accounts/${id}/activity?limit=20`).then(r => r.json()).catch(() => null)
+          if (actRes === null) {
+            setStatusMsg('Waiting on server response — checking again…')
+          } else if (actRes.activity && actRes.activity.length > 0) {
+            setActivity(actRes.activity)
+            confirmed = true
+            break
+          } else {
+            setStatusMsg('Bot is initializing (connecting to MT5, loading models)…')
+          }
+          await new Promise(r => setTimeout(r, 1500))
+        }
+        if (!confirmed) {
+          throw new Error('Bot did not report any activity within 60s — check the server log')
+        }
+        setStatusMsg('Bot started and confirmed running.')
+        setRunning(true)
+      } else {
+        // Stopping just cancels the running task, no re-initialization —
+        // a short settle delay is enough here.
+        await new Promise(r => setTimeout(r, 800))
+        setStatusMsg('Bot stopped.')
+        setRunning(false)
+      }
     } catch (err) {
       setError(err.message)
     } finally {
@@ -390,9 +448,10 @@ function Dashboard({ account, onSettings }) {
       </div>
 
       <button className={`bot-toggle ${running ? 'stop' : 'start'}`} onClick={toggleBot} disabled={toggling}>
-        {toggling ? '...' : (running ? '■ Stop Trading' : '▶ Start Trading')}
+        {toggling ? (running ? 'Stopping…' : 'Starting…') : (running ? '■ Stop Trading' : '▶ Start Trading')}
       </button>
       {error && <div className="error">{error}</div>}
+      {!error && statusMsg && <div className="info">{statusMsg}</div>}
 
       <ModelStatusPanel />
 

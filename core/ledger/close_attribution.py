@@ -73,4 +73,4 @@ def classify_close(
     if reason_code == REASON_CLIENT:
         return "user_manual_close", f"Manual close from terminal @ {exit_price:.5f}"
 
-    return "user_manual_close", f"Close reason indeterminate (reason={reason_code}) — treated as user/manual"
+    return "unknown", f"Close reason indeterminate (reason={reason_code}) — attribution unknown"

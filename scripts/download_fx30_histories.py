@@ -101,7 +101,7 @@ async def main() -> None:
             resolved_map[target] = resolved
 
     for requested, resolved in resolved_map.items():
-        for timeframe in TIMEFRAMES:
+        for timeframe in TRADING_CONFIG.get("timeframes", ["1min", "5min", "15min"]):
             try:
                 df = download_full_history(client.mt5_bridge, resolved, timeframe)
                 summary = summarize_history(df)

@@ -1,0 +1,25 @@
+{
+  "symbol": "USDJPY",
+  "timeframe": "1min",
+  "promoted": true,
+  "promoted_at": "2026-08-16T12:22:45.418302",
+  "accuracy": 0.6871332774518022,
+  "oof_accuracy": 0.6145369418750714,
+  "actionable_accuracy": 0.6871332774518022,
+  "actionable_samples": 4772,
+  "baseline_accuracy": 0.0,
+  "expectancy_r": 0.18066815144766157,
+  "precision_buy": 0.3287305122494432,
+  "precision_sell": 0.7344213649851632,
+  "random_baseline_precision": 0.2857142857142857,
+  "precision_buy_edge_pts": 4.301622653515752,
+  "labeled_samples": 87570,
+  "history_rows": 89468,
+  "absolute_floor": 0.6,
+  "margin_required": 0.02,
+  "validation": {
+    "candidate_model_accuracy": 0.6871332774518022,
+    "promoted": true,
+    "model_family": "ultra"
+  }
+}

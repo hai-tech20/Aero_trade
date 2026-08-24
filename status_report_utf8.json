@@ -1,0 +1,553 @@
+{
+  "data_status": {
+    "total_needed": 105,
+    "missing_count": 0,
+    "partial_count": 15,
+    "complete_count": 90,
+    "missing_samples": [],
+    "partial_samples": [
+      [
+        "XAUUSD",
+        "1h",
+        65845,
+        "2011-08-15 00:00:00",
+        "2026-08-07 23:00:00"
+      ],
+      [
+        "XAUUSD",
+        "4h",
+        17998,
+        "2011-08-15 00:00:00",
+        "2026-08-07 20:00:00"
+      ],
+      [
+        "GBPNZD",
+        "1h",
+        87672,
+        "2011-08-15 00:00:00",
+        "2026-08-07 23:00:00"
+      ],
+      [
+        "CHFJPY",
+        "1d",
+        3000,
+        "2015-01-21 00:00:00",
+        "2026-08-07 00:00:00"
+      ],
+      [
+        "USDZAR",
+        "1h",
+        74367,
+        "2011-08-29 16:00:00",
+        "2026-07-31 00:00:00"
+      ],
+      [
+        "USDZAR",
+        "4h",
+        19160,
+        "2011-08-29 16:00:00",
+        "2026-08-07 20:00:00"
+      ],
+      [
+        "USDZAR",
+        "1d",
+        3471,
+        "2011-08-29 00:00:00",
+        "2026-08-07 00:00:00"
+      ],
+      [
+        "USDMXN",
+        "1h",
+        77764,
+        "2011-08-29 16:00:00",
+        "2026-07-30 23:00:00"
+      ],
+      [
+        "USDSGD",
+        "1h",
+        88720,
+        "2011-08-15 01:00:00",
+        "2026-07-30 23:00:00"
+      ],
+      [
+        "USDNOK",
+        "1h",
+        18752,
+        "2023-06-02 11:00:00",
+        "2026-07-30 23:00:00"
+      ],
+      [
+        "USDNOK",
+        "4h",
+        4941,
+        "2023-06-02 08:00:00",
+        "2026-08-07 20:00:00"
+      ],
+      [
+        "USDNOK",
+        "1d",
+        825,
+        "2023-06-02 00:00:00",
+        "2026-08-07 00:00:00"
+      ],
+      [
+        "USDSEK",
+        "1h",
+        35041,
+        "2020-08-19 16:00:00",
+        "2026-07-30 23:00:00"
+      ],
+      [
+        "USDSEK",
+        "4h",
+        9201,
+        "2020-08-19 16:00:00",
+        "2026-08-07 20:00:00"
+      ],
+      [
+        "USDSEK",
+        "1d",
+        1535,
+        "2020-08-19 00:00:00",
+        "2026-08-07 00:00:00"
+      ]
+    ]
+  },
+  "model_status": {
+    "total_metadata_files": 235,
+    "accuracy_entries": 235,
+    "latest_model_pairs": 105,
+    "max_accuracy": 0.5875112578805164,
+    "min_accuracy": 0.49462204959665373,
+    "mean_accuracy": 0.5185324203130292,
+    "median_accuracy": 0.5147363122867848,
+    "accuracy_counts_by_timeframe": {
+      "15min": 76,
+      "1min": 78,
+      "5min": 81
+    },
+    "latest_sample": [
+      [
+        "AUDCAD",
+        "15min",
+        0.5123326286116984,
+        "20260721_084547",
+        "gbm_AUDCAD_15min.metadata.json"
+      ],
+      [
+        "AUDCAD",
+        "1min",
+        0.5143256073722424,
+        "20260721_083907",
+        "rf_AUDCAD_1min.metadata.json"
+      ],
+      [
+        "AUDCAD",
+        "5min",
+        0.5125379170879677,
+        "20260721_084215",
+        "rf_AUDCAD_5min.metadata.json"
+      ],
+      [
+        "AUDCHF",
+        "15min",
+        0.5223873105109929,
+        "20260721_090335",
+        "gbm_AUDCHF_15min.metadata.json"
+      ],
+      [
+        "AUDCHF",
+        "1min",
+        0.5204849738550824,
+        "20260721_085713",
+        "rf_AUDCHF_1min.metadata.json"
+      ],
+      [
+        "AUDCHF",
+        "5min",
+        0.5252928238964759,
+        "20260721_090007",
+        "rf_AUDCHF_5min.metadata.json"
+      ],
+      [
+        "AUDJPY",
+        "15min",
+        0.5210359248249106,
+        "20260721_063823",
+        "gbm_AUDJPY_15min.metadata.json"
+      ],
+      [
+        "AUDJPY",
+        "1min",
+        0.5159648828496337,
+        "20260721_062231",
+        "rf_AUDJPY_1min.metadata.json"
+      ],
+      [
+        "AUDJPY",
+        "5min",
+        0.5300470925470926,
+        "20260721_062959",
+        "rf_AUDJPY_5min.metadata.json"
+      ],
+      [
+        "AUDNZD",
+        "15min",
+        0.5058912008022061,
+        "20260721_085451",
+        "gbm_AUDNZD_15min.metadata.json"
+      ],
+      [
+        "AUDNZD",
+        "1min",
+        0.5133938836514141,
+        "20260721_084816",
+        "rf_AUDNZD_1min.metadata.json"
+      ],
+      [
+        "AUDNZD",
+        "5min",
+        0.5083947583947583,
+        "20260721_085117",
+        "rf_AUDNZD_5min.metadata.json"
+      ],
+      [
+        "AUDUSD",
+        "15min",
+        0.5174285429738074,
+        "20260721_022650",
+        "gbm_AUDUSD_15min.metadata.json"
+      ],
+      [
+        "AUDUSD",
+        "1min",
+        0.524074352422466,
+        "20260721_021104",
+        "rf_AUDUSD_1min.metadata.json"
+      ],
+      [
+        "AUDUSD",
+        "5min",
+        0.5086146798127676,
+        "20260721_021852",
+        "rf_AUDUSD_5min_v20260721_021852.metadata.json"
+      ],
+      [
+        "BTCUSD",
+        "15min",
+        0.5178006527742908,
+        "20260721_005752",
+        "gbm_BTCUSD_15min_v20260721_005752.metadata.json"
+      ],
+      [
+        "BTCUSD",
+        "1min",
+        0.5145641944880125,
+        "20260721_004953",
+        "rf_BTCUSD_1min_v20260721_004953.metadata.json"
+      ],
+      [
+        "BTCUSD",
+        "5min",
+        0.5140019454256899,
+        "20260721_005335",
+        "rf_BTCUSD_5min_v20260721_005335.metadata.json"
+      ],
+      [
+        "CADCHF",
+        "15min",
+        0.5325945891983628,
+        "20260721_093022",
+        "gbm_CADCHF_15min.metadata.json"
+      ],
+      [
+        "CADCHF",
+        "1min",
+        0.5175453961581129,
+        "20260721_092350",
+        "rf_CADCHF_1min_v20260721_092350.metadata.json"
+      ],
+      [
+        "CADCHF",
+        "5min",
+        0.522050914306203,
+        "20260721_092652",
+        "rf_CADCHF_5min.metadata.json"
+      ],
+      [
+        "CADJPY",
+        "15min",
+        0.5031452871018066,
+        "20260721_082727",
+        "gbm_CADJPY_15min.metadata.json"
+      ],
+      [
+        "CADJPY",
+        "1min",
+        0.4996884029233471,
+        "20260721_070403",
+        "rf_CADJPY_1min_v20260721_070403.metadata.json"
+      ],
+      [
+        "CADJPY",
+        "5min",
+        0.5234680905161454,
+        "20260721_071130",
+        "rf_CADJPY_5min.metadata.json"
+      ],
+      [
+        "CHFJPY",
+        "15min",
+        0.5152426795026073,
+        "20260721_083641",
+        "gbm_CHFJPY_15min.metadata.json"
+      ],
+      [
+        "CHFJPY",
+        "1min",
+        0.5120875343721356,
+        "20260721_083005",
+        "rf_CHFJPY_1min_v20260721_083005.metadata.json"
+      ],
+      [
+        "CHFJPY",
+        "5min",
+        0.5170338637290902,
+        "20260721_083308",
+        "rf_CHFJPY_5min.metadata.json"
+      ],
+      [
+        "EURAUD",
+        "15min",
+        0.5114862165401518,
+        "20260721_042053",
+        "gbm_EURAUD_15min.metadata.json"
+      ],
+      [
+        "EURAUD",
+        "1min",
+        0.5119995991783155,
+        "20260721_040419",
+        "rf_EURAUD_1min.metadata.json"
+      ],
+      [
+        "EURAUD",
+        "5min",
+        0.5158350761876307,
+        "20260721_041209",
+        "rf_EURAUD_5min.metadata.json"
+      ],
+      [
+        "EURCAD",
+        "15min",
+        0.5080179282868525,
+        "20260721_010919",
+        "gbm_EURCAD_15min_v20260721_010919.metadata.json"
+      ],
+      [
+        "EURCAD",
+        "1min",
+        0.513026761774675,
+        "20260721_010114",
+        "rf_EURCAD_1min_v20260721_010114.metadata.json"
+      ],
+      [
+        "EURCAD",
+        "5min",
+        0.5009461209042924,
+        "20260721_010504",
+        "rf_EURCAD_5min_v20260721_010504.metadata.json"
+      ],
+      [
+        "EURCHF",
+        "15min",
+        0.5289252055343894,
+        "20260721_050717",
+        "gbm_EURCHF_15min.metadata.json"
+      ],
+      [
+        "EURCHF",
+        "1min",
+        0.5158406436832988,
+        "20260721_045101",
+        "rf_EURCHF_1min.metadata.json"
+      ],
+      [
+        "EURCHF",
+        "5min",
+        0.5230030333670375,
+        "20260721_045840",
+        "rf_EURCHF_5min.metadata.json"
+      ],
+      [
+        "EURGBP",
+        "15min",
+        0.5282143391707829,
+        "20260721_033403",
+        "gbm_EURGBP_15min.metadata.json"
+      ],
+      [
+        "EURGBP",
+        "1min",
+        0.5424614448051948,
+        "20260721_031724",
+        "rf_EURGBP_1min.metadata.json"
+      ],
+      [
+        "EURGBP",
+        "5min",
+        0.5261428144607111,
+        "20260721_032519",
+        "rf_EURGBP_5min.metadata.json"
+      ],
+      [
+        "EURJPY",
+        "15min",
+        0.5175530586766541,
+        "20260721_035710",
+        "gbm_EURJPY_15min.metadata.json"
+      ],
+      [
+        "EURJPY",
+        "1min",
+        0.5151684253246753,
+        "20260721_034046",
+        "rf_EURJPY_1min_v20260721_034046.metadata.json"
+      ],
+      [
+        "EURJPY",
+        "5min",
+        0.5215129077446468,
+        "20260721_034831",
+        "rf_EURJPY_5min.metadata.json"
+      ],
+      [
+        "EURNZD",
+        "15min",
+        0.5089134548351758,
+        "20260721_044446",
+        "gbm_EURNZD_15min.metadata.json"
+      ],
+      [
+        "EURNZD",
+        "1min",
+        0.49907309985470216,
+        "20260721_042757",
+        "rf_EURNZD_1min.metadata.json"
+      ],
+      [
+        "EURNZD",
+        "5min",
+        0.5034396809571287,
+        "20260721_043558",
+        "rf_EURNZD_5min_v20260721_043558.metadata.json"
+      ],
+      [
+        "EURUSD",
+        "15min",
+        0.5016254063515879,
+        "20260721_000502",
+        "gbm_EURUSD_15min_v20260721_000502.metadata.json"
+      ],
+      [
+        "EURUSD",
+        "1min",
+        0.5193155302048224,
+        "20260720_235553",
+        "rf_EURUSD_1min_v20260720_235553.metadata.json"
+      ],
+      [
+        "EURUSD",
+        "5min",
+        0.5875112578805164,
+        "20260721_110559",
+        "rf_EURUSD_5min.metadata.json"
+      ],
+      [
+        "GBPAUD",
+        "15min",
+        0.5001493875112041,
+        "20260721_053024",
+        "gbm_GBPAUD_15min.metadata.json"
+      ],
+      [
+        "GBPAUD",
+        "1min",
+        0.5018499486125385,
+        "20260721_051405",
+        "rf_GBPAUD_1min.metadata.json"
+      ]
+    ]
+  },
+  "auto_retrain_log": [
+    "[2026-08-09T06:41:49.512411Z] EXIT 0 for: C:\\Python314\\python.exe train_models.py",
+    "[2026-08-09T06:42:49.520551Z] iteration=75: starting download pass",
+    "[2026-08-09T06:42:54.570143Z] EXIT 0 for: C:\\Python314\\python.exe scripts/download_missing_histories.py",
+    "[2026-08-09T06:42:54.571204Z] iteration=75: starting training pass",
+    "[2026-08-09T06:47:29.063130Z] EXIT 0 for: C:\\Python314\\python.exe train_models.py",
+    "[2026-08-09T06:48:29.070831Z] iteration=76: starting download pass",
+    "[2026-08-09T06:48:32.393522Z] EXIT 0 for: C:\\Python314\\python.exe scripts/download_missing_histories.py",
+    "[2026-08-09T06:48:32.394594Z] iteration=76: starting training pass",
+    "[2026-08-09T06:52:02.875073Z] EXIT 0 for: C:\\Python314\\python.exe train_models.py",
+    "[2026-08-09T06:53:02.881408Z] iteration=77: starting download pass",
+    "[2026-08-09T06:53:06.600800Z] EXIT 0 for: C:\\Python314\\python.exe scripts/download_missing_histories.py",
+    "[2026-08-09T06:53:06.601976Z] iteration=77: starting training pass",
+    "[2026-08-09T06:56:40.120664Z] EXIT 0 for: C:\\Python314\\python.exe train_models.py",
+    "[2026-08-09T06:57:40.126441Z] iteration=78: starting download pass",
+    "[2026-08-09T06:57:43.867219Z] EXIT 0 for: C:\\Python314\\python.exe scripts/download_missing_histories.py",
+    "[2026-08-09T06:57:43.868310Z] iteration=78: starting training pass",
+    "[2026-08-09T07:01:13.875881Z] EXIT 0 for: C:\\Python314\\python.exe train_models.py",
+    "[2026-08-09T07:02:13.879517Z] iteration=79: starting download pass",
+    "[2026-08-09T07:02:17.391332Z] EXIT 0 for: C:\\Python314\\python.exe scripts/download_missing_histories.py",
+    "[2026-08-09T07:02:17.392675Z] iteration=79: starting training pass",
+    "[2026-08-09T07:05:46.150870Z] EXIT 0 for: C:\\Python314\\python.exe train_models.py",
+    "[2026-08-09T07:06:46.155045Z] iteration=80: starting download pass",
+    "[2026-08-09T07:06:49.591035Z] EXIT 0 for: C:\\Python314\\python.exe scripts/download_missing_histories.py",
+    "[2026-08-09T07:06:49.592104Z] iteration=80: starting training pass",
+    "[2026-08-09T07:10:16.758670Z] EXIT 0 for: C:\\Python314\\python.exe train_models.py",
+    "[2026-08-09T07:11:16.763563Z] iteration=81: starting download pass",
+    "[2026-08-09T07:11:20.601387Z] EXIT 0 for: C:\\Python314\\python.exe scripts/download_missing_histories.py",
+    "[2026-08-09T07:11:20.602399Z] iteration=81: starting training pass",
+    "[2026-08-09T07:14:36.636899Z] EXIT 0 for: C:\\Python314\\python.exe train_models.py",
+    "[2026-08-09T07:15:36.641085Z] iteration=82: starting download pass",
+    "[2026-08-09T07:15:40.079448Z] EXIT 0 for: C:\\Python314\\python.exe scripts/download_missing_histories.py",
+    "[2026-08-09T07:15:40.080628Z] iteration=82: starting training pass",
+    "[2026-08-09T07:19:28.256536Z] EXIT 0 for: C:\\Python314\\python.exe train_models.py",
+    "[2026-08-09T07:20:28.268899Z] iteration=83: starting download pass",
+    "[2026-08-09T07:20:32.493105Z] EXIT 0 for: C:\\Python314\\python.exe scripts/download_missing_histories.py",
+    "[2026-08-09T07:20:32.494137Z] iteration=83: starting training pass",
+    "[2026-08-09T07:24:22.681893Z] EXIT 0 for: C:\\Python314\\python.exe train_models.py",
+    "[2026-08-09T07:25:22.688150Z] iteration=84: starting download pass",
+    "[2026-08-09T07:25:27.002320Z] EXIT 1 for: C:\\Python314\\python.exe scripts/download_missing_histories.py",
+    "[2026-08-09T07:25:27.003765Z] iteration=84: starting training pass",
+    "[2026-08-09T07:29:03.628223Z] EXIT 0 for: C:\\Python314\\python.exe train_models.py",
+    "[2026-08-09T07:30:03.633444Z] iteration=85: starting download pass",
+    "[2026-08-09T07:30:07.497898Z] EXIT 1 for: C:\\Python314\\python.exe scripts/download_missing_histories.py",
+    "[2026-08-09T07:30:07.499041Z] iteration=85: starting training pass",
+    "[2026-08-09T07:33:50.216516Z] EXIT 0 for: C:\\Python314\\python.exe train_models.py",
+    "[2026-08-09T07:34:50.221410Z] iteration=86: starting download pass",
+    "[2026-08-09T07:34:54.177379Z] EXIT 1 for: C:\\Python314\\python.exe scripts/download_missing_histories.py",
+    "[2026-08-09T07:34:54.178638Z] iteration=86: starting training pass",
+    "[2026-08-09T07:40:21.566284Z] EXIT 0 for: C:\\Python314\\python.exe train_models.py",
+    "[2026-08-09T07:41:21.571030Z] iteration=87: starting download pass",
+    "[2026-08-09T07:41:28.352861Z] EXIT 1 for: C:\\Python314\\python.exe scripts/download_missing_histories.py",
+    "[2026-08-09T07:41:28.354337Z] iteration=87: starting training pass",
+    "[2026-08-09T07:46:50.585890Z] EXIT 0 for: C:\\Python314\\python.exe train_models.py",
+    "[2026-08-09T07:47:50.593041Z] iteration=88: starting download pass",
+    "[2026-08-09T07:47:57.849065Z] EXIT 1 for: C:\\Python314\\python.exe scripts/download_missing_histories.py",
+    "[2026-08-09T07:47:57.854116Z] iteration=88: starting training pass",
+    "[2026-08-09T07:54:38.047245Z] EXIT 0 for: C:\\Python314\\python.exe train_models.py",
+    "[2026-08-09T07:55:38.056041Z] iteration=89: starting download pass",
+    "[2026-08-09T07:55:44.690586Z] EXIT 1 for: C:\\Python314\\python.exe scripts/download_missing_histories.py",
+    "[2026-08-09T07:55:44.692385Z] iteration=89: starting training pass",
+    "[2026-08-09T08:02:24.358989Z] EXIT 0 for: C:\\Python314\\python.exe train_models.py",
+    "[2026-08-09T08:03:24.363743Z] iteration=90: starting download pass",
+    "[2026-08-09T08:03:30.976297Z] EXIT 1 for: C:\\Python314\\python.exe scripts/download_missing_histories.py",
+    "[2026-08-09T08:03:30.978096Z] iteration=90: starting training pass",
+    "[2026-08-09T08:10:09.695968Z] EXIT 0 for: C:\\Python314\\python.exe train_models.py",
+    "[2026-08-09T08:11:09.711673Z] iteration=91: starting download pass",
+    "[2026-08-09T08:11:18.331828Z] EXIT 1 for: C:\\Python314\\python.exe scripts/download_missing_histories.py",
+    "[2026-08-09T08:11:18.333785Z] iteration=91: starting training pass"
+  ],
+  "auto_retrain_log_last_modified": 1786263078.343805
+}

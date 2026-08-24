@@ -1,0 +1,25 @@
+{
+  "symbol": "EURCAD",
+  "timeframe": "1min",
+  "promoted": true,
+  "promoted_at": "2026-08-15T07:09:54.269182",
+  "accuracy": 0.6749215207534007,
+  "oof_accuracy": 0.5997047467635703,
+  "actionable_accuracy": 0.6749215207534007,
+  "actionable_samples": 5734,
+  "baseline_accuracy": 0.0,
+  "expectancy_r": 0.11112347052280303,
+  "precision_buy": 0.3121722548863817,
+  "precision_sell": 0.7170712296060485,
+  "random_baseline_precision": 0.2857142857142857,
+  "precision_buy_edge_pts": 2.6457969172095974,
+  "labeled_samples": 88060,
+  "history_rows": 89433,
+  "absolute_floor": 0.6,
+  "margin_required": 0.02,
+  "validation": {
+    "candidate_model_accuracy": 0.6749215207534007,
+    "promoted": true,
+    "model_family": "ultra"
+  }
+}

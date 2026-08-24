@@ -11,13 +11,17 @@ from typing import Any, Dict, List, Optional, Tuple
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn.base import clone
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import SGDClassifier
 from sklearn.preprocessing import StandardScaler
 
-from ai_engine.models.model_keys import make_model_key, make_scaler_key
+from ai_engine.models.model_keys import make_model_key, make_scaler_key, base_model_key_for_timeframe
+from ai_engine.models.feature_engine import compute_all_features, feature_count_target
+from ai_engine.models.ultra_ensemble import UltraEnsemble
 from ai_engine.training.retraining_service import RetrainingService
-from config.settings import MODEL_DIR
+from ai_engine.training.model_status import get_best_timeframe_for_symbol
+from config.settings import AI_CONFIG, MODEL_DIR
 from utils.logger import TradingLogger
 
 warnings.filterwarnings('ignore')
@@ -45,6 +49,7 @@ class HybridAIPredictor:
         logger.info("AI-Predictor initialized")
         self.models: Dict = {}
         self.scalers: Dict = {}
+        self.ultra_ensembles: Dict[str, UltraEnsemble] = {}
         self.feature_names: List[str] = []
         self.is_trained: bool = False
         self._pending_retrain_buffer: List[Dict[str, Any]] = []
@@ -57,6 +62,7 @@ class HybridAIPredictor:
         # Load pre-trained models if available
         if autoload_models:
             self._load_saved_models()
+            self._load_ultra_ensembles()
 
         self.retraining_service = RetrainingService(self)
     
@@ -67,9 +73,10 @@ class HybridAIPredictor:
         # Base prototypes used to materialize per-symbol models on demand
         self.models['rf_5min'] = RandomForestClassifier(
             n_estimators=100,
-            max_depth=10,
-            min_samples_split=10,
-            min_samples_leaf=5,
+            max_depth=12,
+            min_samples_split=8,
+            min_samples_leaf=4,
+            class_weight='balanced',
             random_state=42,
             n_jobs=1,  # Safer on Windows/locked-down environments
             verbose=0
@@ -77,16 +84,21 @@ class HybridAIPredictor:
         
         # Gradient Boosting (15-minute predictions)
         self.models['gbm_15min'] = GradientBoostingClassifier(
-            n_estimators=50,
+            n_estimators=80,
             max_depth=7,
             learning_rate=0.1,
+            subsample=0.85,
             random_state=42,
             verbose=0
         )
         
         # Online-adjustment model (supports partial_fit)
         self.models['sgd_online'] = SGDClassifier(
-            loss='log_loss', max_iter=1000, random_state=42, warm_start=True
+            loss='log_loss',
+            max_iter=1000,
+            random_state=42,
+            warm_start=True,
+            class_weight='balanced',
         )
         self._sgd_classes = np.array([0, 1])
 
@@ -97,9 +109,41 @@ class HybridAIPredictor:
             random_state=42,
             n_jobs=1
         )
+
+        # Hourly, multi-hour and daily models for longer horizons
+        self.models['rf_1h'] = RandomForestClassifier(
+            n_estimators=80,
+            max_depth=12,
+            min_samples_split=10,
+            min_samples_leaf=5,
+            class_weight='balanced',
+            random_state=42,
+            n_jobs=1,
+            verbose=0,
+        )
+        self.models['rf_4h'] = RandomForestClassifier(
+            n_estimators=80,
+            max_depth=12,
+            min_samples_split=10,
+            min_samples_leaf=5,
+            class_weight='balanced',
+            random_state=42,
+            n_jobs=1,
+            verbose=0,
+        )
+        self.models['rf_1d'] = RandomForestClassifier(
+            n_estimators=80,
+            max_depth=12,
+            min_samples_split=10,
+            min_samples_leaf=5,
+            class_weight='balanced',
+            random_state=42,
+            n_jobs=1,
+            verbose=0,
+        )
         
         # Initialize default scalers for each timeframe; per-symbol scalers are loaded/trained on demand
-        for timeframe in ['1min', '5min', '15min']:
+        for timeframe in ['1min', '5min', '15min', '1h', '4h', '1d']:
             self.scalers[timeframe] = StandardScaler()
         
         logger.success(f"Initialized {len(self.models)} AI models")
@@ -112,6 +156,11 @@ class HybridAIPredictor:
                 if model_files:
                     for model_file in model_files:
                         stem = model_file.stem
+                        if stem.startswith("ultra_") and (
+                            "_sub_" in stem or stem.endswith("_ensemble_meta")
+                        ):
+                            continue
+
                         loaded = joblib.load(model_file)
 
                         # Keep scalers out of the models dict
@@ -141,7 +190,81 @@ class HybridAIPredictor:
                     self.is_trained = True
         except Exception as e:
             logger.warning(f"Could not load saved models: {e}")
-    
+
+    @staticmethod
+    def _ultra_key(symbol: str, timeframe: str) -> str:
+        return f"ultra_{symbol}_{timeframe}"
+
+    @staticmethod
+    def _parse_ultra_stem(stem: str) -> Optional[tuple[str, str]]:
+        if not stem.startswith("ultra_"):
+            return None
+        body = stem[len("ultra_"):]
+        for tf in ("1min", "5min", "15min", "1h", "4h", "1d"):
+            suffix = f"_{tf}"
+            if body.endswith(suffix):
+                return body[: -len(suffix)], tf
+        return None
+
+    def _load_ultra_ensembles(self) -> None:
+        if not AI_CONFIG.get("use_ultra_ensemble", True) or not MODEL_DIR.exists():
+            return
+        min_acc = float(AI_CONFIG.get("min_model_accuracy", 0.60))
+        for meta_path in MODEL_DIR.glob("ultra_*_*.metadata.json"):
+            # NOTE: meta_path.stem only strips the LAST suffix, leaving
+            # "ultra_SYMBOL_TF.metadata" (not "ultra_SYMBOL_TF") for these
+            # double-extension filenames — strip the full ".metadata.json"
+            # suffix explicitly instead, or _parse_ultra_stem never matches
+            # and every promoted ultra model silently fails to load.
+            name = meta_path.name
+            if not name.endswith(".metadata.json"):
+                continue
+            parsed = self._parse_ultra_stem(name[: -len(".metadata.json")])
+            if parsed is None:
+                continue
+            symbol, timeframe = parsed
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            accuracy = float(
+                meta.get("accuracy")
+                or meta.get("validation", {}).get("candidate_model_accuracy")
+                or 0.0
+            )
+            promoted = meta.get("validation", {}).get("promoted", meta.get("promoted", True))
+            if promoted is False or accuracy < min_acc:
+                continue
+            prefix = str(MODEL_DIR / f"ultra_{symbol}_{timeframe}")
+            ensemble = UltraEnsemble(symbol=symbol, timeframe=timeframe, n_jobs=1)
+            if ensemble.load(prefix):
+                key = self._ultra_key(symbol, timeframe)
+                self.ultra_ensembles[key] = ensemble
+                logger.success(
+                    f"Loaded ultra ensemble: {key} (accuracy={accuracy:.4f}, oof={ensemble._oof_accuracy:.4f})"
+                )
+
+    def _parse_model_name(self, model_name: str) -> tuple[str, Optional[str], str]:
+        parts = model_name.split('_')
+        if len(parts) == 2:
+            return parts[0], None, parts[1]
+        if len(parts) == 3:
+            return parts[0], parts[1], parts[2]
+        if len(parts) >= 4:
+            return parts[0], '_'.join(parts[1:-1]), parts[-1]
+        return parts[0], None, parts[-1] if len(parts) else ''
+
+    def _resolve_model_for_training(self, model_name: str):
+        if model_name in self.models:
+            return self.models[model_name]
+        family, _, timeframe = self._parse_model_name(model_name)
+        prototype_name = f"{family}_{timeframe}"
+        if prototype_name in self.models:
+            model = clone(self.models[prototype_name])
+            self.models[model_name] = model
+            return model
+        raise KeyError(f"No base model prototype found for {model_name}")
+
     async def prepare_features(self, df: pd.DataFrame, 
                              lookback: int = 20) -> np.ndarray:
         """
@@ -154,87 +277,195 @@ class HybridAIPredictor:
         features = []
         feature_names = []
         
-        # Use recent data
         recent = df.iloc[-lookback:].copy()
-        
-        # 1. Price-based features
-        returns = recent['close'].pct_change().dropna()
-        
-        # Mean return
-        features.append(returns.mean())
+        recent = recent.astype({col: float for col in ['open', 'high', 'low', 'close', 'volume'] if col in recent.columns})
+        close = recent['close'].to_numpy(dtype=float)
+        high = recent['high'].to_numpy(dtype=float)
+        low = recent['low'].to_numpy(dtype=float)
+        open_ = recent['open'].to_numpy(dtype=float)
+        volume = recent['volume'].to_numpy(dtype=float) if 'volume' in recent.columns else np.zeros(len(recent), dtype=float)
+
+        returns = np.diff(close) / np.maximum(close[:-1], 1e-9)
+        features.append(float(np.nan_to_num(np.mean(returns), nan=0.0)))
         feature_names.append('mean_return')
-        
-        # Volatility (std of returns)
-        features.append(returns.std())
+        features.append(float(np.nan_to_num(np.std(returns), nan=0.0)))
         feature_names.append('volatility')
-        
-        # Skewness
-        features.append(returns.skew())
+        features.append(float(np.nan_to_num(pd.Series(returns).skew(), nan=0.0)))
         feature_names.append('skewness')
-        
-        # 2. Technical indicators
-        close = recent['close'].values
-        
-        # RSI (simplified) - always produce a value (fallback to neutral 50)
-        gains = np.where(np.diff(close) > 0, np.diff(close), 0)
-        losses = np.where(np.diff(close) < 0, -np.diff(close), 0)
-        
+        features.append(float(np.nan_to_num(pd.Series(returns).kurtosis(), nan=0.0)))
+        feature_names.append('kurtosis')
+
+        delta = close[1:] - close[:-1]
+        gains = np.where(delta > 0, delta, 0.0)
+        losses = np.where(delta < 0, -delta, 0.0)
+        avg_gain = np.mean(gains[-14:]) if len(gains) >= 14 else (np.mean(gains) if len(gains) > 0 else 0.0)
+        avg_loss = np.mean(losses[-14:]) if len(losses) >= 14 else (np.mean(losses) if len(losses) > 0 else 0.0)
         rsi = 50.0
-        if len(gains) > 0 and len(losses) > 0:
-            avg_gain = np.mean(gains[-14:]) if len(gains) >= 14 else float(np.mean(gains))
-            avg_loss = np.mean(losses[-14:]) if len(losses) >= 14 else float(np.mean(losses))
-            if avg_loss != 0:
-                rs = avg_gain / avg_loss
-                rsi = 100 - (100 / (1 + rs))
-        features.append(float(rsi))
+        if avg_loss > 0:
+            rs = avg_gain / avg_loss
+            rsi = 100.0 - (100.0 / (1.0 + rs))
+        features.append(float(np.nan_to_num(rsi, nan=50.0)))
         feature_names.append('rsi')
-        
-        # Moving averages
-        ma5 = np.mean(close[-5:]) if len(close) >= 5 else close[-1]
-        ma10 = np.mean(close[-10:]) if len(close) >= 10 else close[-1]
-        ma20 = np.mean(close[-20:]) if len(close) >= 20 else close[-1]
-        
+
+        def ema(values: np.ndarray, period: int) -> np.ndarray:
+            if len(values) < period:
+                return np.full_like(values, values.mean() if len(values) > 0 else 0.0)
+            alpha = 2.0 / (period + 1)
+            ema_values = np.zeros_like(values)
+            ema_values[:period] = np.mean(values[:period])
+            for i in range(period, len(values)):
+                ema_values[i] = alpha * values[i] + (1 - alpha) * ema_values[i - 1]
+            return ema_values
+
+        ma5 = np.mean(close[-5:]) if len(close) >= 5 else float(close[-1])
+        ma10 = np.mean(close[-10:]) if len(close) >= 10 else float(close[-1])
+        ma20 = np.mean(close[-20:]) if len(close) >= 20 else float(close[-1])
+        ma50 = np.mean(close[-50:]) if len(close) >= 50 else float(close[-1])
         features.extend([
-            (close[-1] - ma5) / ma5,
-            (ma5 - ma10) / ma10,
-            (ma10 - ma20) / ma20
+            float((close[-1] - ma5) / np.maximum(ma5, 1e-9)),
+            float((ma5 - ma10) / np.maximum(ma10, 1e-9)),
+            float((ma10 - ma20) / np.maximum(ma20, 1e-9)),
+            float((ma20 - ma50) / np.maximum(ma50, 1e-9)),
         ])
-        feature_names.extend(['ma5_diff', 'ma5_10_diff', 'ma10_20_diff'])
-        
-        # 3. Volume features (always produce; fallback to 0 if unavailable/unstable)
-        volume_pct = 0.0
-        if 'volume' in recent.columns:
-            volume = recent['volume'].values
-            denom = float(np.mean(volume[-5:])) if len(volume) >= 5 else float(np.mean(volume))
-            if denom != 0:
-                volume_pct = float((volume[-1] - denom) / denom)
-        features.append(volume_pct)
-        feature_names.append('volume_pct')
-        
-        # 4. High-low range
-        high_low_ratio = (recent['high'].iloc[-1] - recent['low'].iloc[-1]) / recent['close'].iloc[-1]
+        feature_names.extend(['ma5_diff', 'ma5_10_diff', 'ma10_20_diff', 'ma20_50_diff'])
+
+        atr = 0.0
+        if len(close) >= 2:
+            tr = np.maximum.reduce([
+                high[1:] - low[1:],
+                np.abs(high[1:] - close[:-1]),
+                np.abs(low[1:] - close[:-1]),
+            ])
+            atr = float(np.mean(tr[-14:])) if len(tr) >= 14 else float(np.mean(tr))
+        features.append(float(np.nan_to_num(atr, nan=0.0)))
+        feature_names.append('atr')
+
+        if len(close) >= 20:
+            sma20 = np.mean(close[-20:])
+            std20 = np.std(close[-20:])
+            upper_band = sma20 + 2 * std20
+            lower_band = sma20 - 2 * std20
+            bb_width = float((upper_band - lower_band) / np.maximum(close[-1], 1e-9))
+            bb_position = float((close[-1] - lower_band) / np.maximum((upper_band - lower_band), 1e-9))
+        else:
+            bb_width = 0.0
+            bb_position = 0.5
+        features.extend([bb_width, bb_position])
+        feature_names.extend(['bb_width', 'bb_position'])
+
+        macd_line = ema(close, 12)
+        signal_line = ema(macd_line, 9)
+        macd = float(macd_line[-1] - signal_line[-1]) if len(macd_line) > 0 else 0.0
+        features.append(float(np.nan_to_num(macd, nan=0.0)))
+        feature_names.append('macd_diff')
+
+        body = np.abs(close - open_)
+        bodies = np.abs(high - low)
+        body_ratio = float(np.nan_to_num(np.mean(body / np.maximum(bodies, 1e-9)), nan=0.0))
+        features.append(body_ratio)
+        feature_names.append('body_ratio')
+
+        high_low_ratio = float(np.nan_to_num(np.mean((high - low) / np.maximum(close, 1e-9)), nan=0.0))
         features.append(high_low_ratio)
         feature_names.append('high_low_ratio')
-        
-        # 5. Momentum
-        momentum_5 = (close[-1] - close[-5]) / close[-5] if len(close) >= 5 else 0
-        momentum_10 = (close[-1] - close[-10]) / close[-10] if len(close) >= 10 else 0
-        
+
+        features.append(float(np.nan_to_num((close[-1] - open_[-1]) / np.maximum(open_[-1], 1e-9), nan=0.0)))
+        feature_names.append('close_open_pct')
+
+        volume_pct = 0.0
+        if len(volume) > 0 and np.mean(volume) > 0:
+            volume_pct = float((volume[-1] - np.mean(volume[-5:])) / np.maximum(np.mean(volume[-5:]), 1e-9))
+        features.append(float(np.nan_to_num(volume_pct, nan=0.0)))
+        feature_names.append('volume_pct')
+
+        momentum_5 = float((close[-1] - close[-5]) / np.maximum(close[-5], 1e-9)) if len(close) >= 5 else 0.0
+        momentum_10 = float((close[-1] - close[-10]) / np.maximum(close[-10], 1e-9)) if len(close) >= 10 else 0.0
         features.extend([momentum_5, momentum_10])
         feature_names.extend(['momentum_5', 'momentum_10'])
-        
+
+        time_index = recent.index[-1]
+        if hasattr(time_index, 'weekday'):
+            features.append(float(time_index.weekday() / 6.0))
+            feature_names.append('day_of_week')
+            features.append(float(time_index.hour / 23.0))
+            feature_names.append('hour_of_day')
+        else:
+            features.extend([0.0, 0.0])
+            feature_names.extend(['day_of_week', 'hour_of_day'])
+
         self.feature_names = feature_names
-        
         return np.array(features).reshape(1, -1)
+
+    def _align_feature_matrix(self, features: np.ndarray, expected_n: int) -> np.ndarray:
+        X = features.reshape(1, -1) if features.ndim == 1 else features
+        if X.shape[1] == expected_n:
+            return X
+        if X.shape[1] > expected_n:
+            return X[:, :expected_n]
+        pad = expected_n - X.shape[1]
+        return np.pad(X, ((0, 0), (0, pad)), mode="constant", constant_values=0.0)
+
+    async def _predict_ultra(
+        self,
+        df: pd.DataFrame,
+        symbol: str,
+        timeframe: str,
+        extended_context: Optional[dict] = None,
+    ) -> Prediction:
+        key = self._ultra_key(symbol, timeframe)
+        ensemble = self.ultra_ensembles.get(key)
+        if ensemble is None:
+            return self._get_neutral_prediction(timeframe)
+
+        features, feature_names = compute_all_features(
+            df, lookback=100, symbol=symbol, extended_context=extended_context
+        )
+        if features.size == 0:
+            logger.warning(f"Ultra ensemble feature build failed for {symbol}/{timeframe}")
+            return self._get_neutral_prediction(timeframe)
+
+        X = self._align_feature_matrix(features, ensemble.n_features)
+        direction, confidence, details = ensemble.predict(X)
+        min_confidence = float(AI_CONFIG.get("min_confidence", 0.62))
+        if direction == 0 or confidence < min_confidence:
+            logger.info(
+                f"Ultra ensemble hold for {symbol}/{timeframe} "
+                f"(dir={direction}, conf={confidence:.3f} < {min_confidence:.3f}, "
+                f"weighted_p={details.get('weighted_prob')}, agree={details.get('submodel_agreement')})"
+            )
+            return self._get_neutral_prediction(timeframe)
+
+        current_price = float(df["close"].iloc[-1])
+        move_pct = min(0.05, max(0.005, confidence * 0.02))
+        price_target = (
+            current_price * (1 + move_pct)
+            if direction == 1
+            else current_price * (1 - move_pct)
+        )
+        self.feature_names = feature_names
+        return Prediction(
+            direction=direction,
+            confidence=confidence,
+            price_target=float(price_target),
+            timeframe=timeframe,
+            features=feature_names,
+            timestamp=datetime.now().timestamp(),
+            model_used=key,
+        )
     
-    async def predict(self, df: pd.DataFrame, 
+    async def predict(self, df: pd.DataFrame,
                      timeframe: str = '5min',
                      model_type: str = 'auto',
-                     symbol: str = 'EURUSD') -> Prediction:
+                     symbol: str = 'EURUSD',
+                     extended_context: Optional[dict] = None) -> Prediction:
         """
         Make AI prediction on market data
         """
         try:
+            ultra_key = self._ultra_key(symbol, timeframe)
+            if AI_CONFIG.get("use_ultra_ensemble", True) and ultra_key in self.ultra_ensembles:
+                return await self._predict_ultra(df, symbol, timeframe, extended_context=extended_context)
+
             # Check if we have any models
             if not self.models or len(self.models) == 0:
                 logger.warning("No models available, returning neutral prediction")
@@ -252,16 +483,32 @@ class HybridAIPredictor:
                 logger.warning("Insufficient features for prediction")
                 return self._get_neutral_prediction(timeframe)
             
-            # Select model
+            # Select model: use symbol-specific model when available, otherwise fallback to the timeframe prototype
             if model_type == 'auto':
                 preferred_family = 'gbm' if timeframe == '15min' else 'rf'
-                symbol_key = make_model_key(symbol, timeframe, preferred_family)
-                model_key = symbol_key if symbol_key in self.models else None
-                if model_key is None:
-                    logger.warning(f"No active symbol-qualified model for {symbol} {timeframe}")
-                    return self._get_neutral_prediction(timeframe)
+                model_key = make_model_key(symbol, timeframe, preferred_family)
+                if model_key not in self.models:
+                    fallback_model_key = base_model_key_for_timeframe(timeframe)
+                    if fallback_model_key in self.models:
+                        logger.warning(
+                            f"No trained symbol-specific model for {symbol} {timeframe}; using fallback {fallback_model_key}"
+                        )
+                        model_key = fallback_model_key
+                    else:
+                        logger.warning(f"No trained model available for {symbol} {timeframe}; returning neutral")
+                        return self._get_neutral_prediction(timeframe)
             else:
                 model_key = f'{model_type}_{timeframe}'
+                if model_key not in self.models:
+                    fallback_model_key = base_model_key_for_timeframe(timeframe)
+                    if fallback_model_key in self.models:
+                        logger.warning(
+                            f"Model {model_key} not found; using fallback {fallback_model_key}"
+                        )
+                        model_key = fallback_model_key
+                    else:
+                        logger.warning(f"Model {model_key} not found for {symbol} {timeframe}")
+                        return self._get_neutral_prediction(timeframe)
             
             if model_key not in self.models:
                 logger.warning(f"Model {model_key} not found for {symbol} {timeframe}")
@@ -308,25 +555,34 @@ class HybridAIPredictor:
                     logger.warning(f"Scaler error for {timeframe}, using raw features: {e}")
                     features_scaled = X
             
-            # Make prediction
             try:
-                prediction = model.predict(features_scaled)[0]
-                probabilities = model.predict_proba(features_scaled)[0]
-                
-                # Get confidence
-                confidence = float(np.max(probabilities))
-                
-                # Determine direction (assuming binary classification: 1=buy, 0=sell)
-                # Adjust based on your training labels
-                direction = 1 if prediction == 1 else -1
-                
-                # Calculate price target (simplified)
-                current_price = float(df['close'].iloc[-1])
-                if direction == 1:
-                    price_target = current_price * (1 + confidence * 0.02)  # 2% target
+                if hasattr(model, 'predict_proba'):
+                    probabilities = model.predict_proba(features_scaled)[0]
+                    class_index = int(np.argmax(probabilities))
+                    predicted_label = int(model.classes_[class_index]) if hasattr(model, 'classes_') else int(class_index)
+                    confidence = float(np.max(probabilities))
+                elif hasattr(model, 'decision_function'):
+                    score = model.decision_function(features_scaled)[0]
+                    probabilities = 1.0 / (1.0 + np.exp(-score))
+                    predicted_label = 1 if score > 0 else 0
+                    confidence = float(np.abs(probabilities - 0.5) * 2.0)
                 else:
-                    price_target = current_price * (1 - confidence * 0.02)
-                
+                    predicted_label = int(model.predict(features_scaled)[0])
+                    confidence = 0.5
+
+                direction = 1 if predicted_label == 1 else -1
+                min_confidence = float(AI_CONFIG.get('min_confidence', 0.45))
+                if confidence < min_confidence:
+                    logger.info(f"Prediction confidence below threshold ({confidence:.3f} < {min_confidence:.3f})")
+                    return self._get_neutral_prediction(timeframe)
+
+                current_price = float(df['close'].iloc[-1])
+                move_pct = min(0.05, max(0.005, confidence * 0.02))
+                if direction == 1:
+                    price_target = current_price * (1 + move_pct)
+                else:
+                    price_target = current_price * (1 - move_pct)
+
                 return Prediction(
                     direction=direction,
                     confidence=confidence,
@@ -369,41 +625,60 @@ class HybridAIPredictor:
         Train a model
         """
         try:
-            if model_name in self.models:
-                logger.info(f"Training {model_name}...")
-                self.models[model_name].fit(X_train, y_train)
-                self.is_trained = True
+            if model_name not in self.models:
+                try:
+                    self.models[model_name] = self._resolve_model_for_training(model_name)
+                except KeyError as e:
+                    logger.error(f"Training error: {e}")
+                    return
 
-                if save:
-                    MODEL_DIR.mkdir(parents=True, exist_ok=True)
-                    parts = model_name.split('_')
-                    timeframe = parts[-1]
-                    suffix = f"_v{version_suffix}" if version_suffix else ""
-                    model_path = MODEL_DIR / f"{model_name}{suffix}.joblib"
-                    resolved_scaler_name = scaler_name or f"scaler_{timeframe}"
-                    scaler_path = MODEL_DIR / f"{resolved_scaler_name}{suffix}.joblib"
-                    active_scaler = self.scalers.get(resolved_scaler_name, self.scalers.get(timeframe))
-                    if active_scaler is None:
-                        active_scaler = StandardScaler()
-                        self.scalers[resolved_scaler_name] = active_scaler
-                        self.scalers[timeframe] = active_scaler
-                    joblib.dump(self.models[model_name], model_path)
-                    joblib.dump(active_scaler, scaler_path)
-                    logger.success(f"Model saved: {model_path}")
+            logger.info(f"Training {model_name}...")
+            parts = model_name.split('_')
+            timeframe = parts[-1]
+            resolved_scaler_name = scaler_name or f"scaler_{timeframe}"
+            if scaler_name is None and len(parts) == 3:
+                resolved_scaler_name = make_scaler_key(parts[1], timeframe)
+
+            active_scaler = self.scalers.get(resolved_scaler_name, self.scalers.get(timeframe))
+            if active_scaler is None:
+                active_scaler = StandardScaler()
+                self.scalers[resolved_scaler_name] = active_scaler
+                self.scalers[timeframe] = active_scaler
+
+            if X_train is not None and len(X_train):
+                try:
+                    active_scaler.fit(X_train)
+                    X_train_scaled = active_scaler.transform(X_train)
+                except Exception as scaler_error:
+                    logger.warning(f"Scaler training failed for {resolved_scaler_name}: {scaler_error}")
+                    X_train_scaled = X_train
+            else:
+                X_train_scaled = X_train
+
+            self.models[model_name].fit(X_train_scaled, y_train)
+            self.is_trained = True
+
+            if save:
+                MODEL_DIR.mkdir(parents=True, exist_ok=True)
+                suffix = f"_v{version_suffix}" if version_suffix else ""
+                model_path = MODEL_DIR / f"{model_name}{suffix}.joblib"
+                scaler_path = MODEL_DIR / f"{resolved_scaler_name}{suffix}.joblib"
+                joblib.dump(self.models[model_name], model_path)
+                joblib.dump(active_scaler, scaler_path)
+                logger.success(f"Model saved: {model_path}")
+                if metadata is not None:
+                    metadata_path = MODEL_DIR / f"{model_name}{suffix}.metadata.json"
+                    metadata_path.write_text(json.dumps(metadata, indent=2), encoding='utf-8')
+                    self.training_metadata[model_name] = metadata
+                if promote and suffix:
+                    active_model_key = active_name or model_name
+                    active_model_path = MODEL_DIR / f"{active_model_key}.joblib"
+                    active_scaler_path = MODEL_DIR / f"{resolved_scaler_name}.joblib"
+                    joblib.dump(self.models[model_name], active_model_path)
+                    joblib.dump(active_scaler, active_scaler_path)
                     if metadata is not None:
-                        metadata_path = MODEL_DIR / f"{model_name}{suffix}.metadata.json"
-                        metadata_path.write_text(json.dumps(metadata, indent=2), encoding='utf-8')
-                        self.training_metadata[model_name] = metadata
-                    if promote and suffix:
-                        active_model_key = active_name or model_name
-                        active_model_path = MODEL_DIR / f"{active_model_key}.joblib"
-                        active_scaler_path = MODEL_DIR / f"{resolved_scaler_name}.joblib"
-                        joblib.dump(self.models[model_name], active_model_path)
-                        joblib.dump(active_scaler, active_scaler_path)
-                        if metadata is not None:
-                            active_metadata_path = MODEL_DIR / f"{active_model_key}.metadata.json"
-                            active_metadata_path.write_text(json.dumps(metadata, indent=2), encoding='utf-8')
-            
+                        active_metadata_path = MODEL_DIR / f"{active_model_key}.metadata.json"
+                        active_metadata_path.write_text(json.dumps(metadata, indent=2), encoding='utf-8')
         except Exception as e:
             logger.error(f"Training error: {e}")
     

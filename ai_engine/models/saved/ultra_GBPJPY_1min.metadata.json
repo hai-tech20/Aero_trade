@@ -1,0 +1,25 @@
+{
+  "symbol": "GBPJPY",
+  "timeframe": "1min",
+  "promoted": true,
+  "promoted_at": "2026-08-16T11:37:50.182831",
+  "accuracy": 0.6997497914929107,
+  "oof_accuracy": 0.621407390510949,
+  "actionable_accuracy": 0.6997497914929107,
+  "actionable_samples": 4796,
+  "baseline_accuracy": 0.0,
+  "expectancy_r": 0.11698937693061118,
+  "precision_buy": 0.3135688992691931,
+  "precision_sell": 0.7346938775510204,
+  "random_baseline_precision": 0.2857142857142857,
+  "precision_buy_edge_pts": 2.7854613554907424,
+  "labeled_samples": 87677,
+  "history_rows": 89447,
+  "absolute_floor": 0.6,
+  "margin_required": 0.02,
+  "validation": {
+    "candidate_model_accuracy": 0.6997497914929107,
+    "promoted": true,
+    "model_family": "ultra"
+  }
+}

@@ -98,6 +98,17 @@ def record_open_trade(
     conn.close()
 
 
+def is_trade_closed(order_id: str) -> bool:
+    init_ledger()
+    conn = _conn()
+    row = conn.execute(
+        "SELECT close_time FROM trades WHERE order_id = ? AND close_time IS NOT NULL",
+        (order_id,),
+    ).fetchone()
+    conn.close()
+    return row is not None
+
+
 def record_close_trade(
     order_id: str,
     exit_price: float,
@@ -105,16 +116,20 @@ def record_close_trade(
     confidence_at_entry: float = 0.0,
     closed_by: str = "unknown",
     close_reason: str = "",
-):
+) -> str:
+    if is_trade_closed(order_id):
+        return "already_closed"
+
     outcome = "win" if pnl_usd > 0 else ("loss" if pnl_usd < 0 else "breakeven")
     init_ledger()
     conn = _conn()
-    conn.execute(
+    cur = conn.execute(
         """UPDATE trades SET exit_price = ?, close_time = ?, pnl_usd = ?, outcome = ?,
            closed_by = ?, close_reason = ?
-           WHERE order_id = ?""",
+           WHERE order_id = ? AND close_time IS NULL""",
         (exit_price, datetime.now().isoformat(), pnl_usd, outcome, closed_by, close_reason, order_id),
     )
+    rows = cur.rowcount
 
     threshold = float(AI_CONFIG.get("min_confidence", 0.30))
     from core.ledger.close_attribution import TRAINABLE_CLOSED_BY
@@ -221,15 +236,15 @@ def resolve_orphan_trade(
     order_id: str, account_id: str, symbol: str, direction: str,
     entry_price: float, volume: float, pnl_usd: float = 0.0,
     closed_by: str = "unknown", close_reason: str = "Orphan resolution — no broker history",
+    exit_price: Optional[float] = None,
 ):
     init_ledger()
     conn = _conn()
     existing = conn.execute("SELECT order_id FROM trades WHERE order_id = ?", (order_id,)).fetchone()
-    if existing:
-        record_close_trade(order_id, entry_price, pnl_usd, 0, closed_by, close_reason)
-    else:
+    real_exit_price = entry_price if exit_price is None else exit_price
+    if not existing:
         record_open_trade(order_id, account_id, symbol, direction, entry_price, volume, 0, "{}", False, "")
-        record_close_trade(order_id, entry_price, pnl_usd, 0, closed_by, close_reason)
+    record_close_trade(order_id, real_exit_price, pnl_usd, 0, closed_by, close_reason)
     conn.close()
 
 

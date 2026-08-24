@@ -1,0 +1,25 @@
+{
+  "symbol": "CADCHF",
+  "timeframe": "1min",
+  "promoted": true,
+  "promoted_at": "2026-08-15T06:12:07.133350",
+  "accuracy": 0.6634005763688761,
+  "oof_accuracy": 0.6081494057724958,
+  "actionable_accuracy": 0.6634005763688761,
+  "actionable_samples": 3470,
+  "baseline_accuracy": 0.0,
+  "expectancy_r": 0.1251551312649164,
+  "precision_buy": 0.31551312649164676,
+  "precision_sell": 0.7021630615640599,
+  "random_baseline_precision": 0.2857142857142857,
+  "precision_buy_edge_pts": 2.9798840777361058,
+  "labeled_samples": 88348,
+  "history_rows": 89449,
+  "absolute_floor": 0.6,
+  "margin_required": 0.02,
+  "validation": {
+    "candidate_model_accuracy": 0.6634005763688761,
+    "promoted": true,
+    "model_family": "ultra"
+  }
+}

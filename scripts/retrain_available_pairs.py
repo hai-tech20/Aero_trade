@@ -8,13 +8,10 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 from ai_engine.models.predictor import HybridAIPredictor
 from config.settings import DATA_DIR, TRADING_CONFIG
 
-TIMEFRAMES = ["1min", "5min", "15min"]
-
-
 def build_targets() -> list[tuple[str, str]]:
     targets: list[tuple[str, str]] = []
     for symbol in TRADING_CONFIG.get("pairs", []):
-        for timeframe in TIMEFRAMES:
+        for timeframe in TRADING_CONFIG.get("timeframes", []):
             path = DATA_DIR / f"{symbol}_{timeframe}_history.parquet"
             if path.exists():
                 targets.append((str(symbol), timeframe))

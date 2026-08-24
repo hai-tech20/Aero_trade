@@ -9,7 +9,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 from config.settings import DATA_DIR, TRADING_CONFIG
 
 
-TIMEFRAMES = ["1min", "5min", "15min"]
+from config.settings import DATA_DIR, TRADING_CONFIG
 
 
 def summarize(path: Path) -> dict:
@@ -30,7 +30,7 @@ def summarize(path: Path) -> dict:
 def main() -> None:
     rows = []
     for symbol in TRADING_CONFIG.get("pairs", []):
-        for timeframe in TIMEFRAMES:
+        for timeframe in TRADING_CONFIG.get("timeframes", []):
             path = DATA_DIR / f"{symbol}_{timeframe}_history.parquet"
             rows.append({
                 "symbol": symbol,

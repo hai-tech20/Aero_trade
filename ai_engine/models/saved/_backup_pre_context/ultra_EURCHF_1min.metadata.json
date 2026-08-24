@@ -1,0 +1,25 @@
+{
+  "symbol": "EURCHF",
+  "timeframe": "1min",
+  "promoted": true,
+  "promoted_at": "2026-08-14T18:55:08.150101",
+  "accuracy": 0.6695064629847238,
+  "oof_accuracy": 0.5822727013298328,
+  "actionable_accuracy": 0.6695064629847238,
+  "actionable_samples": 3404,
+  "baseline_accuracy": 0.0,
+  "expectancy_r": 0.194118842740023,
+  "precision_buy": 0.33193305779524357,
+  "precision_sell": 0.7099927588703838,
+  "random_baseline_precision": 0.2857142857142857,
+  "precision_buy_edge_pts": 4.621877208095787,
+  "labeled_samples": 87603,
+  "history_rows": 89519,
+  "absolute_floor": 0.6,
+  "margin_required": 0.02,
+  "validation": {
+    "candidate_model_accuracy": 0.6695064629847238,
+    "promoted": true,
+    "model_family": "ultra"
+  }
+}

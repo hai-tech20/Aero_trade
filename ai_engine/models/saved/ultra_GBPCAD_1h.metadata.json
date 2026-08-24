@@ -1,0 +1,25 @@
+{
+  "symbol": "GBPCAD",
+  "timeframe": "1h",
+  "promoted": true,
+  "promoted_at": "2026-08-16T23:07:47.294856",
+  "accuracy": 0.6689396522332083,
+  "oof_accuracy": 0.5904192625021047,
+  "actionable_accuracy": 0.6689396522332083,
+  "actionable_samples": 2933,
+  "baseline_accuracy": 0.0,
+  "expectancy_r": 0.19299403747870525,
+  "precision_buy": 0.33166524701873934,
+  "precision_sell": 0.7236524537409493,
+  "random_baseline_precision": 0.2857142857142857,
+  "precision_buy_edge_pts": 4.595096130445365,
+  "labeled_samples": 59388,
+  "history_rows": 92720,
+  "absolute_floor": 0.6,
+  "margin_required": 0.02,
+  "validation": {
+    "candidate_model_accuracy": 0.6689396522332083,
+    "promoted": true,
+    "model_family": "ultra"
+  }
+}

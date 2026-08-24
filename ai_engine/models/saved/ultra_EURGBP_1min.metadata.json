@@ -1,0 +1,25 @@
+{
+  "symbol": "EURGBP",
+  "timeframe": "1min",
+  "promoted": true,
+  "promoted_at": "2026-08-16T11:11:33.711327",
+  "accuracy": 0.7080039525691699,
+  "oof_accuracy": 0.6127897589666705,
+  "actionable_accuracy": 0.7080039525691699,
+  "actionable_samples": 4048,
+  "baseline_accuracy": 0.0,
+  "expectancy_r": 0.15329341317365264,
+  "precision_buy": 0.32221271742229823,
+  "precision_sell": 0.7398913699456849,
+  "random_baseline_precision": 0.2857142857142857,
+  "precision_buy_edge_pts": 3.6498431708012538,
+  "labeled_samples": 86706,
+  "history_rows": 89454,
+  "absolute_floor": 0.6,
+  "margin_required": 0.02,
+  "validation": {
+    "candidate_model_accuracy": 0.7080039525691699,
+    "promoted": true,
+    "model_family": "ultra"
+  }
+}

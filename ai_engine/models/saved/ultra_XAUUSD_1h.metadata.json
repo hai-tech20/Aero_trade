@@ -1,0 +1,25 @@
+{
+  "symbol": "XAUUSD",
+  "timeframe": "1h",
+  "promoted": true,
+  "promoted_at": "2026-08-16T16:13:02.697360",
+  "accuracy": 0.703619171829149,
+  "oof_accuracy": 0.5783233899342206,
+  "actionable_accuracy": 0.703619171829149,
+  "actionable_samples": 3067,
+  "baseline_accuracy": 0.0,
+  "expectancy_r": 0.3094506338839801,
+  "precision_buy": 0.3593930080676143,
+  "precision_sell": 0.750939143501127,
+  "random_baseline_precision": 0.2857142857142857,
+  "precision_buy_edge_pts": 7.367872235332862,
+  "labeled_samples": 65367,
+  "history_rows": 65845,
+  "absolute_floor": 0.6,
+  "margin_required": 0.02,
+  "validation": {
+    "candidate_model_accuracy": 0.703619171829149,
+    "promoted": true,
+    "model_family": "ultra"
+  }
+}

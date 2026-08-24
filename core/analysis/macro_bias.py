@@ -73,41 +73,107 @@ def get_key_zones(df: pd.DataFrame, swing_highs: List[int], swing_lows: List[int
     return zones
 
 
-def get_macro_bias(symbol: str, df_1h: pd.DataFrame = None, df_4h: pd.DataFrame = None) -> Dict:
+def _zone_proximity(current_price: float, zones: List[Dict], direction: str, tolerance_pct: float = 0.0025) -> Dict:
     """
-    Combine 1H and 4H structure into a single macro bias.
-    If 1H and 4H disagree, returns 'neutral' -- the HTF layer should not force a bias
-    when the two timeframes conflict.
+    Is price currently sitting at a validated HTF zone that supports `direction`?
+    A long wants to be near a 'support' zone (buying the dip into structure), a
+    short wants to be near a 'resistance' zone -- entering AT a zone is a
+    materially different (better) entry than the same directional bias taken
+    mid-range with no nearby structure.
     """
-    result = {"bias": "neutral", "key_zones": [], "confidence": 0.0, "htf_1h": "unknown", "htf_4h": "unknown"}
+    if not zones or current_price <= 0 or direction not in ("bullish", "bearish"):
+        return {"at_key_zone": False, "zone_quality": 0, "zone_distance_pct": None}
+    wanted_type = "support" if direction == "bullish" else "resistance"
+    candidates = [z for z in zones if z["type"] == wanted_type]
+    if not candidates:
+        return {"at_key_zone": False, "zone_quality": 0, "zone_distance_pct": None}
+    nearest = min(candidates, key=lambda z: abs(z["price"] - current_price) / current_price)
+    dist_pct = abs(nearest["price"] - current_price) / current_price
+    at_zone = dist_pct <= tolerance_pct
+    return {
+        "at_key_zone": bool(at_zone),
+        "zone_quality": int(nearest["touches"]) if at_zone else 0,
+        "zone_distance_pct": float(dist_pct),
+    }
+
+
+def get_macro_bias(
+    symbol: str,
+    df_1h: pd.DataFrame = None,
+    df_4h: pd.DataFrame = None,
+    df_1d: pd.DataFrame = None,
+    df_30min: pd.DataFrame = None,
+    current_price: float = None,
+) -> Dict:
+    """
+    Top-down multi-timeframe confluence: 30min/1H are the "setup" tier, 4H/1D
+    are the "trend" tier. Returns a continuous confluence_score (0..1) rather
+    than only a binary bias -- a trade taken when 3 timeframes agree AND price
+    sits at a validated HTF zone is a genuinely different quality of entry
+    than one timeframe alone flipping bullish, and callers should be able to
+    demand more from the LTF trigger when confluence is weak instead of just
+    gating pass/fail. df_1d and df_30min are optional so this stays backward
+    compatible for callers that only have 1H/4H (e.g. before 30min history
+    exists for a symbol).
+    """
+    result = {
+        "bias": "neutral", "key_zones": [], "confidence": 0.0,
+        "htf_1h": "unknown", "htf_4h": "unknown", "htf_1d": "unknown", "htf_30min": "unknown",
+        "confluence_score": 0.0, "agreeing_timeframes": 0, "total_timeframes": 0,
+        "at_key_zone": False, "zone_quality": 0, "zone_distance_pct": None,
+    }
     try:
-        bias_1h = "unknown"
-        bias_4h = "unknown"
+        # Weight higher timeframes more heavily -- a daily trend flip means more
+        # than a 30min one for "am I trading with or against the real tide".
+        tf_weights = {"30min": 1.0, "1h": 1.5, "4h": 2.0, "1d": 2.5}
+        frames = {"30min": df_30min, "1h": df_1h, "4h": df_4h, "1d": df_1d}
+        structures: Dict[str, str] = {}
         zones: List[Dict] = []
 
-        if df_1h is not None and len(df_1h) >= 30:
-            sh1, sl1 = find_swings(df_1h, left_right=3)
-            bias_1h = classify_structure(df_1h, sh1, sl1)
-            zones += get_key_zones(df_1h, sh1, sl1)
+        for tf, df in frames.items():
+            if df is not None and len(df) >= 30:
+                sh, sl = find_swings(df, left_right=3)
+                structures[tf] = classify_structure(df, sh, sl)
+                zones += get_key_zones(df, sh, sl)
+            else:
+                structures[tf] = "unknown"
 
-        if df_4h is not None and len(df_4h) >= 30:
-            sh4, sl4 = find_swings(df_4h, left_right=3)
-            bias_4h = classify_structure(df_4h, sh4, sl4)
-            zones += get_key_zones(df_4h, sh4, sl4)
-
-        result["htf_1h"] = bias_1h
-        result["htf_4h"] = bias_4h
+        result["htf_1h"] = structures["1h"]
+        result["htf_4h"] = structures["4h"]
+        result["htf_1d"] = structures["1d"]
+        result["htf_30min"] = structures["30min"]
         result["key_zones"] = zones
 
-        if bias_1h == bias_4h and bias_1h in ("bullish", "bearish"):
-            result["bias"] = bias_1h
-            result["confidence"] = 0.7
-        elif bias_4h in ("bullish", "bearish") and bias_1h == "ranging":
-            result["bias"] = bias_4h
-            result["confidence"] = 0.4
-        else:
-            result["bias"] = "neutral"
-            result["confidence"] = 0.0
+        available = {tf: s for tf, s in structures.items() if s != "unknown"}
+        result["total_timeframes"] = len(available)
+
+        if available:
+            bull_w = sum(tf_weights[tf] for tf, s in available.items() if s == "bullish")
+            bear_w = sum(tf_weights[tf] for tf, s in available.items() if s == "bearish")
+            total_w = sum(tf_weights[tf] for tf in available)
+            result["agreeing_timeframes"] = sum(1 for s in available.values() if s in ("bullish", "bearish"))
+
+            if bull_w > bear_w and bull_w > 0:
+                result["bias"] = "bullish"
+                result["confluence_score"] = round(bull_w / total_w, 3)
+            elif bear_w > bull_w and bear_w > 0:
+                result["bias"] = "bearish"
+                result["confluence_score"] = round(bear_w / total_w, 3)
+            else:
+                result["bias"] = "neutral"
+                result["confluence_score"] = 0.0
+
+            # confidence stays for backward compatibility with existing callers
+            result["confidence"] = result["confluence_score"] if result["bias"] != "neutral" else 0.0
+
+        if current_price and result["bias"] in ("bullish", "bearish"):
+            zp = _zone_proximity(current_price, zones, result["bias"])
+            result.update(zp)
+            if zp["at_key_zone"]:
+                # Being AT a validated zone in the direction of confluence is a
+                # genuine entry-quality signal, not just "trend agrees" -- boost
+                # the score, capped at 1.0.
+                result["confluence_score"] = round(min(1.0, result["confluence_score"] + 0.15), 3)
 
         return result
     except Exception as e:

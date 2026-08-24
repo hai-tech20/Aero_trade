@@ -1,0 +1,25 @@
+{
+  "symbol": "AUDNZD",
+  "timeframe": "1min",
+  "promoted": true,
+  "promoted_at": "2026-08-14T23:59:49.716081",
+  "accuracy": 0.6946107784431138,
+  "oof_accuracy": 0.5859020852221215,
+  "actionable_accuracy": 0.6946107784431138,
+  "actionable_samples": 1503,
+  "baseline_accuracy": 0.0,
+  "expectancy_r": 0.11458003169572106,
+  "precision_buy": 0.31299524564183834,
+  "precision_sell": 0.7463768115942029,
+  "random_baseline_precision": 0.2857142857142857,
+  "precision_buy_edge_pts": 2.728095992755264,
+  "labeled_samples": 88236,
+  "history_rows": 89456,
+  "absolute_floor": 0.6,
+  "margin_required": 0.02,
+  "validation": {
+    "candidate_model_accuracy": 0.6946107784431138,
+    "promoted": true,
+    "model_family": "ultra"
+  }
+}

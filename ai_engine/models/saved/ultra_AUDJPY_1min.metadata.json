@@ -1,0 +1,25 @@
+{
+  "symbol": "AUDJPY",
+  "timeframe": "1min",
+  "promoted": true,
+  "promoted_at": "2026-08-16T09:55:00.712995",
+  "accuracy": 0.6769596199524941,
+  "oof_accuracy": 0.594372461806227,
+  "actionable_accuracy": 0.6769596199524941,
+  "actionable_samples": 2947,
+  "baseline_accuracy": 0.0,
+  "expectancy_r": 0.23462897526501758,
+  "precision_buy": 0.3415783274440518,
+  "precision_sell": 0.7034431691965939,
+  "random_baseline_precision": 0.2857142857142857,
+  "precision_buy_edge_pts": 5.586404172976611,
+  "labeled_samples": 51710,
+  "history_rows": 52500,
+  "absolute_floor": 0.6,
+  "margin_required": 0.02,
+  "validation": {
+    "candidate_model_accuracy": 0.6769596199524941,
+    "promoted": true,
+    "model_family": "ultra"
+  }
+}

@@ -451,9 +451,17 @@ class SniperLogic:
     def get_sniper_signal(self, symbol: str, df_1min: pd.DataFrame, 
                          df_5min: pd.DataFrame, macro_bias: Optional[str] = None) -> Dict:
         """
-        Get comprehensive sniper entry signal
-        Combines liquidity sweeps, order blocks, and CHoCH
+        Get comprehensive sniper entry signal.
+
+        RULES:
+          1. NO MA crossover fallback — only real structure signals count.
+          2. AT LEAST sniper_required_conditions of (Liquidity Sweep + CHoCH + Order Block)
+             must fire in same direction (configurable, see config/settings.py).
+          3. Each individual directional component (sweep, choch, ob) must agree.
         """
+        from config.settings import SIGNAL_FUSION_CONFIG
+        REQUIRED_CONDITIONS = int(SIGNAL_FUSION_CONFIG.get("sniper_required_conditions", 2))
+
         signal = {
             'direction': None,
             'confidence': 0.0,
@@ -463,94 +471,163 @@ class SniperLogic:
             'reason': '',
             'liquidity_sweep': None,
             'order_block': None,
-            'choch': None
+            'choch': None,
+            'conditions_satisfied': 0,
+            'conditions_required': REQUIRED_CONDITIONS,
+            'macro_bias_applied': str(macro_bias or "neutral"),
         }
-        
-        try:
-            # Precompute simple volatility; used to avoid micro-noise entries
-            atr1 = self._atr(df_1min.tail(100), period=14)
 
-            # 1. Check for liquidity sweep
+        try:
+            atr1 = self._atr(df_1min.tail(100), period=14)
+            current_price = float(df_1min['close'].iloc[-1])
+
+            # --------------------------------------------------------------
+            # 1. Liquidity Sweep
+            # --------------------------------------------------------------
+            sweep_dir: Optional[str] = None
+            sweep_conf = 0.0
             sweep = self.detect_liquidity_sweep(df_1min, symbol)
             if sweep and sweep.swept:
-                signal['liquidity_sweep'] = sweep
-                signal['direction'] = sweep.direction
-                signal['confidence'] += sweep.strength * 0.35
-            
-            # 2. Check for CHoCH
+                sweep_dir = sweep.direction  # BUY/SELL
+                sweep_conf = sweep.strength
+
+            # --------------------------------------------------------------
+            # 2. CHoCH
+            # --------------------------------------------------------------
+            choch_dir: Optional[str] = None
+            choch_conf = 0.0
             choch = self.detect_choch(df_1min, df_5min, symbol)
             if choch and choch.confirmed:
-                signal['choch'] = choch
-                if choch.direction == 'BULLISH':
-                    if signal['direction'] is None:
-                        signal['direction'] = 'BUY'
-                    signal['confidence'] += 0.35
-                elif choch.direction == 'BEARISH':
-                    if signal['direction'] is None:
-                        signal['direction'] = 'SELL'
-                    signal['confidence'] += 0.35
-            
-            # 3. Check for order block entry OR just use recent price action
-            current_price = df_1min['close'].iloc[-1]
-            ob = self.check_order_block_entry(symbol, current_price, signal['direction'])
-            if ob:
-                signal['order_block'] = ob
-                signal['confidence'] += ob.strength * 0.3
-                signal['entry_price'] = ob.price_low if ob.is_bullish else ob.price_high
-                
-                # Calculate SL/TP
-                if ob.is_bullish:
-                    signal['stop_loss'] = ob.price_low * 0.9995  # 0.05% below OB
-                    signal['take_profit'] = ob.price_high * 1.002  # 0.2% above OB
-                else:
-                    signal['stop_loss'] = ob.price_high * 1.0005  # 0.05% above OB
-                    signal['take_profit'] = ob.price_low * 0.998  # 0.2% below OB
-            
-            # If no direction yet, add a simple moving average crossover check
-            if signal['direction'] is None and len(df_1min) >= 20:
-                close = df_1min['close'].values
-                ma5 = np.mean(close[-5:])
-                ma20 = np.mean(close[-20:])
-                if ma5 > ma20 and close[-1] > ma5:
-                    signal['direction'] = 'BUY'
-                    signal['confidence'] += 0.4
-                elif ma5 < ma20 and close[-1] < ma5:
-                    signal['direction'] = 'SELL'
-                    signal['confidence'] += 0.4
-            
-            # Apply macro (1H/4H) bias as a soft top-down filter — boosts confidence when
-            # the lower-timeframe signal agrees with the bigger picture, reduces it when it
-            # doesn't. This is soft (not a hard block) so symbols without HTF data yet keep
-            # trading exactly as before.
-            if macro_bias in ("bullish", "bearish") and signal['direction']:
-                signal_dir_bullish = signal['direction'] == 'BUY'
-                bias_bullish = macro_bias == "bullish"
-                if signal_dir_bullish == bias_bullish:
-                    signal['confidence'] = min(1.0, signal['confidence'] * 1.15)
-                else:
-                    signal['confidence'] = signal['confidence'] * 0.5
+                choch_dir = "BUY" if choch.direction == "BULLISH" else "SELL"
+                choch_conf = 0.85  # CHoCH is a strong confirmed signal
 
-            # Build reason string
+            # --------------------------------------------------------------
+            # 3. Order Block
+            # --------------------------------------------------------------
+            ob_dir: Optional[str] = None
+            ob_conf = 0.0
+            ob = None
+            # Probe OB for BUY and SELL direction separately
+            for probe in ("BUY", "SELL"):
+                ob_probe = self.check_order_block_entry(symbol, current_price, probe)
+                if ob_probe:
+                    ob = ob_probe
+                    ob_dir = "BUY" if ob_probe.is_bullish else "SELL"
+                    ob_conf = ob_probe.strength
+                    break
+
+            # --------------------------------------------------------------
+            # Count conditions per direction
+            # --------------------------------------------------------------
+            buy_conditions = [
+                (sweep_dir == "BUY", sweep_conf),
+                (choch_dir == "BUY", choch_conf),
+                (ob_dir == "BUY", ob_conf),
+            ]
+            sell_conditions = [
+                (sweep_dir == "SELL", sweep_conf),
+                (choch_dir == "SELL", choch_conf),
+                (ob_dir == "SELL", ob_conf),
+            ]
+            buy_count = sum(1 for ok, _ in buy_conditions if ok)
+            sell_count = sum(1 for ok, _ in sell_conditions if ok)
+
+            # --------------------------------------------------------------
+            # Direction decision — majority of conditions + >= 2 required
+            # --------------------------------------------------------------
+            final_dir: Optional[str] = None
+            final_conf = 0.0
+            conditions_ok = 0
+
+            if buy_count >= REQUIRED_CONDITIONS and buy_count > sell_count:
+                final_dir = "BUY"
+                conditions_ok = buy_count
+                # Weighted confidence of the BUY-side active conditions
+                active = [c for ok, c in buy_conditions if ok]
+                final_conf = float(np.mean(active)) if active else 0.0
+            elif sell_count >= REQUIRED_CONDITIONS and sell_count > buy_count:
+                final_dir = "SELL"
+                conditions_ok = sell_count
+                active = [c for ok, c in sell_conditions if ok]
+                final_conf = float(np.mean(active)) if active else 0.0
+            else:
+                # Not enough consensus
+                signal["conditions_satisfied"] = max(buy_count, sell_count)
+                signal["reason"] = (
+                    f"Insufficient sniper conditions (have buy={buy_count}, sell={sell_count}, "
+                    f"need >= {REQUIRED_CONDITIONS} same-direction)"
+                )
+                return signal
+
+            # --------------------------------------------------------------
+            # Compute SL/TP (prefer OB levels; else use ATR-based)
+            # --------------------------------------------------------------
+            entry_price = current_price
+            sl_price = 0.0
+            tp_price = 0.0
+            if ob and (("BUY" == final_dir and ob.is_bullish) or ("SELL" == final_dir and not ob.is_bullish)):
+                signal["order_block"] = ob
+                entry_price = ob.price_low if ob.is_bullish else ob.price_high
+                if ob.is_bullish:
+                    sl_price = ob.price_low * 0.9995
+                    tp_price = ob.price_high * 1.002
+                else:
+                    sl_price = ob.price_high * 1.0005
+                    tp_price = ob.price_low * 0.998
+
+            if sweep_dir == final_dir:
+                signal["liquidity_sweep"] = sweep
+            if choch_dir == final_dir:
+                signal["choch"] = choch
+
+            # Fallback: if OB gave no levels, build them from 1.2xATR SL, 3xATR TP
+            if atr1 > 0 and (sl_price == 0 or tp_price == 0):
+                if final_dir == "BUY":
+                    sl_price = sl_price or (entry_price - atr1 * 1.2)
+                    tp_price = tp_price or (entry_price + atr1 * 3.0)
+                else:
+                    sl_price = sl_price or (entry_price + atr1 * 1.2)
+                    tp_price = tp_price or (entry_price - atr1 * 3.0)
+
+            # GUARANTEE: TP distance >= SL distance (no bad R:R)
+            sl_dist = abs(entry_price - sl_price)
+            tp_dist = abs(entry_price - tp_price)
+            min_target_rr = 2.5
+            if sl_dist > 0 and tp_dist < sl_dist * min_target_rr:
+                if final_dir == "BUY":
+                    tp_price = entry_price + sl_dist * min_target_rr
+                else:
+                    tp_price = entry_price - sl_dist * min_target_rr
+                tp_dist = abs(entry_price - tp_price)
+
+            signal["direction"] = final_dir
+            signal["confidence"] = float(np.clip(final_conf, 0.0, 1.0))
+            signal["entry_price"] = float(entry_price)
+            signal["stop_loss"] = float(sl_price)
+            signal["take_profit"] = float(tp_price)
+            signal["conditions_satisfied"] = conditions_ok
+
+            # Reason string
             reasons = []
-            if sweep:
+            if sweep_dir == final_dir and sweep:
                 reasons.append(f"Liquidity sweep ({sweep.direction})")
-            if choch:
+            if choch_dir == final_dir and choch:
                 reasons.append(f"CHoCH ({choch.direction})")
-            if signal.get('order_block'):
+            if ob_dir == final_dir and ob:
                 reasons.append("Order block entry")
-            if signal['direction'] and not reasons:
-                reasons.append("Moving average signal")
-            
-            signal['reason'] = " | ".join(reasons) if reasons else "No signal"
-            
-            # Cap confidence at 1.0
-            signal['confidence'] = min(1.0, signal['confidence'])
-            
+            if macro_bias in ("bullish", "bearish"):
+                htf_aligns = (macro_bias == "bullish" and final_dir == "BUY") or (macro_bias == "bearish" and final_dir == "SELL")
+                reasons.append(f"HTF bias {'aligned' if htf_aligns else 'counter-trend'} ({macro_bias})")
+            rr = (tp_dist / sl_dist) if sl_dist > 0 else 0.0
+            reasons.append(f"R:R={rr:.1f}")
+            signal["reason"] = " | ".join(reasons) if reasons else "No signal"
+
             return signal
-            
+
         except Exception as e:
             logger.error(f"Error getting sniper signal: {e}")
             return signal
+
 
 # Global instance
 sniper_logic = SniperLogic()

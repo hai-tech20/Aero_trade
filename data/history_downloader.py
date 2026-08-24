@@ -109,12 +109,17 @@ def download_full_history(
     return full_df
 
 
-def download_all_for_bridge(bridge: MT5Bridge, pairs: Optional[list[str]] = None, timeframes: Optional[list[str]] = None):
+def download_all_for_bridge(
+    bridge: MT5Bridge,
+    pairs: Optional[list[str]] = None,
+    timeframes: Optional[list[str]] = None,
+    years: Optional[int] = None,
+):
     pairs = pairs or cast(list[str], TRADING_CONFIG.get("pairs", ["EURUSD"]))
     timeframes = timeframes or cast(list[str], TRADING_CONFIG.get("timeframes", ["5min"]))
     for symbol in pairs:
         for tf in timeframes:
             try:
-                download_full_history(bridge, symbol, tf)
+                download_full_history(bridge, symbol, tf, years=years)
             except Exception as e:
                 logger.error(f"Failed to download {symbol} {tf}: {e}")

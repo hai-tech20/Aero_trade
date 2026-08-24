@@ -1,0 +1,25 @@
+{
+  "symbol": "USDCAD",
+  "timeframe": "5min",
+  "promoted": true,
+  "promoted_at": "2026-08-16T11:53:28.920620",
+  "accuracy": 0.7276042853886483,
+  "oof_accuracy": 0.606095337327429,
+  "actionable_accuracy": 0.7276042853886483,
+  "actionable_samples": 4387,
+  "baseline_accuracy": 0.0,
+  "expectancy_r": 0.20702295967586337,
+  "precision_buy": 0.33500546658949126,
+  "precision_sell": 0.7794843664289632,
+  "random_baseline_precision": 0.2857142857142857,
+  "precision_buy_edge_pts": 4.929118087520557,
+  "labeled_samples": 95973,
+  "history_rows": 97704,
+  "absolute_floor": 0.6,
+  "margin_required": 0.02,
+  "validation": {
+    "candidate_model_accuracy": 0.7276042853886483,
+    "promoted": true,
+    "model_family": "ultra"
+  }
+}

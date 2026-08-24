@@ -32,6 +32,9 @@ MODEL_KEYS: Dict[str, str] = {
     "1min": "rf_1min",
     "5min": "rf_5min",
     "15min": "gbm_15min",
+    "1h": "rf_1h",
+    "4h": "rf_4h",
+    "1d": "rf_1d",
 }
 
 
@@ -236,7 +239,23 @@ class RetrainingService:
                 continue
             current_price = float(df["close"].iloc[i])
             future_price = float(df["close"].iloc[i + horizon])
-            label = 1 if future_price > current_price else 0
+            price_diff = future_price - current_price
+
+            atr_window = df["high"].iloc[i - lookback:i].astype(float).to_numpy()
+            low_window = df["low"].iloc[i - lookback:i].astype(float).to_numpy()
+            close_window = df["close"].iloc[i - lookback:i].astype(float).to_numpy()
+            if len(close_window) < 2:
+                continue
+            tr = np.maximum.reduce([
+                atr_window[1:] - low_window[1:],
+                np.abs(atr_window[1:] - close_window[:-1]),
+                np.abs(low_window[1:] - close_window[:-1]),
+            ])
+            atr = float(np.mean(tr[-14:])) if len(tr) >= 14 else float(np.mean(tr)) if len(tr) else 0.0
+            min_move = max(atr * 0.25, current_price * 0.0002, 0.0003)
+            if abs(price_diff) < min_move:
+                continue
+            label = 1 if price_diff > 0 else 0
             X.append(features.flatten())
             y.append(label)
         return np.array(X), np.array(y)

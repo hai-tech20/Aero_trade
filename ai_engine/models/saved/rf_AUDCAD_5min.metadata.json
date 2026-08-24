@@ -1,25 +1,25 @@
 {
   "model_name": "rf_AUDCAD_5min",
-  "version": "20260721_084215",
+  "version": "20260824_123126",
   "symbol": "AUDCAD",
   "timeframe": "5min",
-  "trained_at": "2026-07-21T08:42:15.884397",
-  "training_reason": "available_pairs_retrain",
+  "trained_at": "2026-08-24T12:31:26.630257",
+  "training_reason": "final_targeted_batch",
   "training_source": "verified_real_history",
   "verified_real_history": true,
-  "history_path": "C:\\Users\\pc\\Desktop\\company projects\\fbs-ai-trader\\data\\AUDCAD_5min_history.parquet",
-  "history_rows": 98924,
+  "history_path": "C:\\Users\\pc\\Desktop\\company projects\\aero_trade\\data\\AUDCAD_5min_history.parquet",
+  "history_rows": 97696,
   "history_date_range": {
-    "start": "2025-03-10 00:00:00",
-    "end": "2026-07-17 23:55:00"
+    "start": "2025-04-04 08:40:00",
+    "end": "2026-08-07 23:55:00"
   },
-  "historical_samples": 98857,
-  "trade_outcome_rows_since_last_run": 14,
+  "historical_samples": 44910,
+  "trade_outcome_rows_since_last_run": 65,
   "validation": {
-    "current_model_accuracy": 0.5029828109201213,
-    "candidate_model_accuracy": 0.5125379170879677,
-    "mistake_accuracy_before": null,
-    "mistake_accuracy_after": null,
+    "current_model_accuracy": 0.504450378282154,
+    "candidate_model_accuracy": 0.5202492211838006,
+    "mistake_accuracy_before": 0.0,
+    "mistake_accuracy_after": 0.0,
     "promoted": true
   }
 }

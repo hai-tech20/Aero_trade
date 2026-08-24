@@ -6,13 +6,12 @@ Works with any broker offering MT5 login.
 import asyncio
 import concurrent.futures
 import time
-import random
 from typing import Dict, List, Optional
 from datetime import datetime
 
 from utils.logger import logger
 from config.settings import BROKER_CONFIG, TRADING_CONFIG, APP_NAME
-from core.broker.mt5_bridge import MT5Bridge
+from core.broker.mt5_bridge import MT5Bridge, mt5_bridge
 from core.broker.broker_registry import BrokerPreset, get_broker
 
 
@@ -25,7 +24,7 @@ class MT5BrokerClient:
         self.account_info = {}
         self.orders = []
         self.use_mt5 = False
-        self.mt5_bridge: Optional[MT5Bridge] = None
+        self.mt5_bridge: Optional[MT5Bridge] = mt5_bridge
         self.broker_preset: Optional[BrokerPreset] = None
         self.is_demo = True
         self.demo_balance = 10000.0
@@ -46,9 +45,11 @@ class MT5BrokerClient:
                 self.broker_preset = get_broker(broker_id)
                 BROKER_CONFIG["name"] = self.broker_preset.display_name
 
-            if login is not None and password is not None and server is not None:
-                return await self._connect_mt5(login, password, server, demo, mt5_path)
-            return await self._connect_mock(demo)
+            if login is None or password is None or server is None:
+                logger.error("MT5 connection failed: missing login credentials")
+                return False
+
+            return await self._connect_mt5(login, password, server, demo, mt5_path)
         except Exception as e:
             logger.error(f"Connection failed: {e}")
             return False
@@ -65,7 +66,6 @@ class MT5BrokerClient:
 
     async def _connect_mt5(self, login: int, password: str, server: str, demo: bool, path: Optional[str] = None) -> bool:
         try:
-            self.mt5_bridge = MT5Bridge()
             loop = asyncio.get_event_loop()
             try:
                 success = await asyncio.wait_for(
@@ -121,88 +121,89 @@ class MT5BrokerClient:
             return False, str(e), {}
 
     async def get_account_info(self) -> Dict:
-        if not self.connected:
-            await self.connect(demo=True)
-        if self.use_mt5 and self.mt5_bridge:
-            self.account_info = self.mt5_bridge.get_account_info()
+        if not self.connected or not self.mt5_bridge:
+            logger.error("Cannot get account info: no active MT5 connection")
+            return {}
+        self.account_info = self.mt5_bridge.get_account_info()
         return self.account_info.copy()
 
     async def place_order(self, symbol: str, order_type: str, volume: float, **kwargs) -> Dict:
         try:
-            if not self.connected:
-                await self.connect(demo=True)
+            if not self.connected or not self.mt5_bridge:
+                return {"success": False, "error": "No live MT5 connection", "order_id": None}
             if volume <= 0:
                 return {"success": False, "error": "Volume must be positive", "order_id": None}
 
-            if self.use_mt5 and self.mt5_bridge:
-                result = self.mt5_bridge.place_order(
-                    symbol=symbol, order_type=order_type, volume=volume, **kwargs
-                )
-                if result.get("success"):
-                    result["symbol"] = symbol
-                    result["direction"] = order_type
-                return result
-
-            order_id = int(time.time() * 1000)
-            order = {
-                "order_id": order_id, "symbol": symbol, "type": order_type,
-                "volume": volume, "entry_price": 1.0, "status": "open",
-                "time": datetime.now().isoformat(),
-                "comment": kwargs.get("comment", APP_NAME),
-            }
-            self.orders.append(order)
-            return {"success": True, "order_id": order_id, "price": 1.0, "volume": volume, "symbol": symbol}
+            result = self.mt5_bridge.place_order(symbol=symbol, order_type=order_type, volume=volume, **kwargs)
+            if result.get("success"):
+                result["symbol"] = symbol
+                result["direction"] = order_type
+            return result
         except Exception as e:
             return {"success": False, "error": str(e), "order_id": None}
 
     async def close_order(self, order_id: int, **kwargs) -> Dict:
-        if self.use_mt5 and self.mt5_bridge:
-            result = self.mt5_bridge.close_order(order_id)
-            if result.get("success"):
-                self.mt5_bridge.get_positions()
-                # P&L from last deal — simplified
-                result["pnl_usd"] = kwargs.get("pnl_usd", 0)
-            return result
-        order = next((o for o in self.orders if o["order_id"] == order_id), None)
-        if not order:
-            return {"success": False, "error": f"Order {order_id} not found"}
-        pnl_usd = random.uniform(-50, 50)
-        order["status"] = "closed"
-        order["pnl_usd"] = pnl_usd
-        self.orders = [o for o in self.orders if o["order_id"] != order_id]
-        return {"success": True, "order_id": order_id, "pnl_usd": pnl_usd}
+        if not self.connected or not self.mt5_bridge:
+            return {"success": False, "error": "No live MT5 connection"}
+        result = self.mt5_bridge.close_order(order_id)
+        if result.get("success"):
+            self.mt5_bridge.get_positions()
+            result["pnl_usd"] = kwargs.get("pnl_usd", 0)
+        return result
 
-    async def get_open_orders(self) -> List[Dict]:
-        if self.use_mt5 and self.mt5_bridge:
-            positions = self.mt5_bridge.get_positions()
-            return [{
-                "order_id": p.get("ticket", 0),
-                "symbol": p.get("symbol", ""),
-                "type": "BUY" if p.get("type", 0) == 0 else "SELL",
-                "volume": p.get("volume", 0),
-                "entry_price": p.get("price_open", 0),
-                "profit": p.get("profit", 0),
-                "pnl_usd": p.get("profit", 0),
-                "stop_loss": p.get("sl", 0),
-                "take_profit": p.get("tp", 0),
-                "status": "open",
-            } for p in positions]
-        return [o for o in self.orders if o.get("status") == "open"]
+    async def get_open_orders(self) -> Optional[List[Dict]]:
+        """Returns None when the broker query itself failed — callers must
+        treat that as "unknown", not as "confirmed zero positions"."""
+        if not self.connected or not self.mt5_bridge:
+            logger.error("Cannot get open orders: no live MT5 connection")
+            return None
+        positions = self.mt5_bridge.get_positions()
+        if positions is None:
+            return None
+        return [{
+            "order_id": p.get("ticket", 0),
+            "symbol": p.get("symbol", ""),
+            "type": "BUY" if p.get("type", 0) == 0 else "SELL",
+            "volume": p.get("volume", 0),
+            "entry_price": p.get("price_open", 0),
+            "profit": p.get("profit", 0),
+            "pnl_usd": p.get("profit", 0),
+            "stop_loss": p.get("sl", 0),
+            "take_profit": p.get("tp", 0),
+            "status": "open",
+        } for p in positions]
 
     async def get_close_deal(self, position_id: int) -> Dict:
-        if self.use_mt5 and self.mt5_bridge:
-            return self.mt5_bridge.get_close_deal_for_position(position_id)
-        return {}
+        if not self.connected or not self.mt5_bridge:
+            logger.error("Cannot get close deal: no live MT5 connection")
+            return {}
+        return self.mt5_bridge.get_close_deal_for_position(position_id)
 
     async def get_order_history(self, limit: int = 100) -> List[Dict]:
-        if self.use_mt5 and self.mt5_bridge:
-            return self.mt5_bridge.get_deal_history(limit=limit)
-        return self.orders[-limit:]
+        if not self.connected or not self.mt5_bridge:
+            logger.error("Cannot get order history: no live MT5 connection")
+            return []
+        return self.mt5_bridge.get_deal_history(limit=limit)
 
     async def get_market_price(self, symbol: str) -> Dict:
-        if self.use_mt5 and self.mt5_bridge:
-            return self.mt5_bridge.get_market_price(symbol)
-        return {"symbol": symbol, "bid": 1.1, "ask": 1.10015, "spread": 1.5}
+        if not self.connected or not self.mt5_bridge:
+            logger.error("Cannot get market price: no live MT5 connection")
+            return {}
+        return self.mt5_bridge.get_market_price(symbol)
+
+    async def modify_position(self, order_id: int, stop_loss: float = 0.0, take_profit: float = 0.0, **kwargs) -> Dict:
+        if not self.connected or not self.mt5_bridge:
+            return {"success": False, "error": "No live MT5 connection"}
+        sl = kwargs.get("sl", stop_loss)
+        tp = kwargs.get("tp", take_profit)
+        return self.mt5_bridge.modify_position_sl_tp(int(order_id), sl=float(sl or 0.0), tp=float(tp or 0.0))
+
+    async def close_partial(self, order_id: int, volume: float, **kwargs) -> Dict:
+        if not self.connected or not self.mt5_bridge:
+            return {"success": False, "error": "No live MT5 connection"}
+        if volume <= 0:
+            return {"success": False, "error": "Volume must be positive for partial close"}
+        return self.mt5_bridge.close_partial_position(int(order_id), float(volume))
 
     async def disconnect(self):
         if self.use_mt5 and self.mt5_bridge:

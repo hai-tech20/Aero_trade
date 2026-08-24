@@ -19,6 +19,7 @@ from core.broker.credential_store import (
 )
 from core.broker.mt5_broker_client import MT5BrokerClient
 from core.engine.aero_trade_bot import AeroTradeBot
+from data.history_downloader import download_all_for_bridge
 from core.ledger.trade_ledger import get_closed_trades, get_trade_summary, init_ledger, build_self_analysis
 from ai_engine.training.model_status import get_model_status
 from utils.logger import logger
@@ -48,6 +49,12 @@ class SettingsUpdate(BaseModel):
     enabled_pairs: Optional[list] = None
     aggressive_mode: Optional[bool] = None
     max_daily_loss_pct: Optional[float] = None
+
+
+class DownloadHistoryRequest(BaseModel):
+    years: Optional[int] = None
+    pairs: Optional[list[str]] = None
+    timeframes: Optional[list[str]] = None
 
 
 @asynccontextmanager
@@ -130,7 +137,7 @@ async def get_account(account_id: str):
             info = bot.account_info or {}
             positions = []
             if bot.broker and bot.broker.connected:
-                positions = await bot.broker.get_open_orders()
+                positions = await bot.broker.get_open_orders() or []
             floating = bot.get_floating_stats()
             return {
                 **info,
@@ -153,7 +160,7 @@ async def get_account(account_id: str):
         info = await client.get_account_info()
         positions = []
         if client.mt5_bridge and client.connected:
-            positions = client.mt5_bridge.get_positions()
+            positions = client.mt5_bridge.get_positions() or []
         await client.disconnect()
         return {
             **info,
@@ -171,6 +178,36 @@ async def get_account(account_id: str):
         raise HTTPException(500, str(e))
 
 
+@app.post("/accounts/{account_id}/download-history")
+async def download_history(account_id: str, req: DownloadHistoryRequest):
+    try:
+        if account_id not in _bots:
+            raise HTTPException(400, "Download history is only available for a running bot")
+        bot = _bots[account_id]
+        if not bot.broker or not bot.broker.connected or not bot.broker.mt5_bridge:
+            raise HTTPException(400, "Bot does not currently have a live MT5 connection")
+
+        # download_all_for_bridge is synchronous and can run for a long time
+        # (many symbols x timeframes) — run it in a worker thread so it
+        # doesn't block the asyncio event loop. A blocking call here freezes
+        # the ENTIRE server, including every other account's trading loop
+        # and all UI/API requests, for the whole download duration.
+        asyncio.create_task(
+            asyncio.to_thread(
+                download_all_for_bridge,
+                bot.broker.mt5_bridge,
+                pairs=req.pairs,
+                timeframes=req.timeframes,
+                years=req.years,
+            )
+        )
+        return {"status": "success", "message": "History download started in background via running bot"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @app.get("/accounts/{account_id}/positions")
 async def get_positions(account_id: str):
     try:
@@ -178,7 +215,7 @@ async def get_positions(account_id: str):
             bot = _bots[account_id]
             orders = []
             if bot.broker and bot.broker.connected:
-                orders = await bot.broker.get_open_orders()
+                orders = await bot.broker.get_open_orders() or []
             return orders
         
         creds = load_broker_credentials(account_id)
@@ -189,7 +226,7 @@ async def get_positions(account_id: str):
             raise HTTPException(504, "MT5 connection timed out — terminal may be stuck on history sync. Try restarting MT5 and reconnecting.")
         if not client.connected:
             raise HTTPException(502, "Failed to connect to MT5 terminal")
-        orders = await client.get_open_orders()
+        orders = await client.get_open_orders() or []
         await client.disconnect()
         return orders
     except KeyError:
@@ -264,8 +301,19 @@ def _run_bot_in_thread(account_id: str, creds: dict):
     async def _bot_main():
         try:
             bot = AeroTradeBot(account_id)
-            await bot.initialize(creds)
+            # Register BEFORE initialize(), not after. initialize() does a
+            # real MT5 connect + loads every model + market data for all 35
+            # symbols, which can take anywhere from several seconds to over
+            # a minute. Registering only after it finished meant every
+            # endpoint (/activity, /stop) kept pointing at whatever bot
+            # object was there from the PREVIOUS run for that entire window
+            # — /activity showed stale leftover logs instead of "starting
+            # up", and a /stop click during that window silently missed the
+            # bot that was actually initializing, which then went on to
+            # register itself and run anyway: an orphaned bot the user
+            # believed they'd stopped.
             _bots[account_id] = bot
+            await bot.initialize(creds)
             await bot.run()
         except Exception as e:
             logger.error(f"Failed to start bot for {account_id}: {e}")
@@ -315,11 +363,7 @@ def enable_live_mode(account_id: str, req: LiveModeRequest):
         if meta.get("is_demo"):
             raise HTTPException(400, "Live mode only applies to real accounts")
         if req.enable:
-            update_account_meta(account_id, {
-                "live_trading_enabled": True,
-                "aggressive_mode": False,
-            })
-            TRADING_CONFIG["aggressive_mode"] = False
+            update_account_meta(account_id, {"live_trading_enabled": True})
             return {"status": "live_trading_enabled", "warning": "Real money is at risk"}
         update_account_meta(account_id, {"live_trading_enabled": False})
         return {"status": "live_trading_disabled"}
@@ -351,8 +395,6 @@ def update_settings(account_id: str, req: SettingsUpdate):
         if req.enabled_pairs is not None:
             updates["enabled_pairs"] = req.enabled_pairs
         if req.aggressive_mode is not None:
-            if req.aggressive_mode and not meta.get("is_demo"):
-                raise HTTPException(400, "Aggressive mode only available on demo accounts")
             updates["aggressive_mode"] = req.aggressive_mode
             TRADING_CONFIG["aggressive_mode"] = req.aggressive_mode
         if req.risk_per_trade is not None:
